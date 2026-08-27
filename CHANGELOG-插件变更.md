@@ -103,6 +103,19 @@ L2 中段；阶段 0 剩余：统一写协调（规模较大）。
 ### 成熟度
 L1 → L2 中段 → 阶段 0 完成（9/9）。下一步进入阶段 A：持久 Phase 1 作业系统。
 
+## 2026-08-27 · 阶段 A 起步（stage-1 作业状态机核心）
+
+对应总纲：§15 阶段 A（持久 Phase 1 作业系统）。
+
+### 变更
+- 模块级导出 `stage1BackoffSeconds(attempt)`（分级退避，60s→120s→240s…封顶 3600s）。
+- 模块级导出 `reclaimStage1Jobs(state, now)`：把 `running` 且租约过期的 stage-1 作业收回 `pending`（进程中断/重启恢复边界）；纯函数。
+- 设计文档：`dsh-rollout-Phase1持久作业系统-数据结构与状态机设计.md`（存储层、enqueue、drain、迁移方案）。
+- 测试：`test/phase1-job-state.test.mjs`（退避递增 + 租约回收）。
+
+### 说明
+- 阶段 A 核心「持久 `.stage1-state.json` 存储层 + `enqueueStage1Job` + `drainStage1Jobs` 领取/提炼/提交 + 事件回调只入队 + `.pipeline-state.json` 迁移 + 废弃内存 pendingPipeline」为后续实现块；本提交先落地状态机可单测部分。
+
 ## 之前发布（2026-08-27 · P0/P1 修复，总纲作为基线）
 - `0801c22` fix: P0 数据安全（导入原子切换、草稿防套娃）
 - `97eb85e` feat: 秘密脱敏（三道防线 + 存量补全）
