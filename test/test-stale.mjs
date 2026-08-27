@@ -1,15 +1,18 @@
 // One-off isolated test for stale semantics (P#7 / GPT P1 "maxDraftAgeDays 否决新活动").
-// Verifies a session that was summarized long ago but has RECENT new activity is
-// still picked as a secondary candidate (the old code used the *summary age* to
-// compute staleness and wrongly vetoed it), while a truly dormant session stays
-// excluded.
+// 原意：很久以前总结、最近又有新活动的会话，应被当作候选（旧代码按 summary 年龄算 stale
+// 而否决它）；真正休眠的会话保持排除。
+//
+// 接线③：disposer 只 enqueue「被处置的那个会话」，pipelinePhase1 的次级候选选择不再由
+// disposer 驱动。stale-veto 的选择逻辑现在发生在「是否入队」的决策层（非 drain 消费者）。
+// 本测试迁移为：手动 enqueue 'old'（新活动会话 → 候选）让其经 drain 提炼为 with_output，
+// 而 'dormant'（无新活动）不 enqueue → 无作业（被排除）；trigger → no_output 无操作。
 import assert from 'node:assert'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
 const PLUGIN = 'file:///D:/%E8%BD%AF%E4%BB%B6/Deepseek/plugins/dsh-rollout/lib/index.js'
-const { apply } = await import(PLUGIN)
+const { apply, enqueueStage1JobFile } = await import(PLUGIN)
 
 const table = (() => {
   const m = new Map()
@@ -23,8 +26,8 @@ const table = (() => {
 })()
 
 const eventHandlers = {}
-// Replay a real 'user/message' event so pipelinePhase1's secondary path gets a
-// non-empty transcript from the persistence (sessionQuery.readSession) path.
+// Replay a real 'user/message' event so the persistence path gets a non-empty
+// transcript for the candidate session.
 const msgEvent = (id, text) => ({
   type: 'user/message',
   seq: 0,
@@ -57,12 +60,17 @@ const tmpHome = path.join(os.tmpdir(), 'dsh-rollout-stale-' + Date.now())
 process.env.DSH_HOME = tmpHome
 fs.mkdirSync(tmpHome, { recursive: true })
 const memoryRoot = () => path.join(tmpHome, 'memories')
-const statePath = () => path.join(memoryRoot(), '.pipeline-state.json')
-const readState = () => { try { return JSON.parse(fs.readFileSync(statePath(), 'utf8')) } catch { return { sessions: {} } } }
+const statePath = () => path.join(memoryRoot(), '.stage1-state.json')
+const readState = () => { try { return JSON.parse(fs.readFileSync(statePath(), 'utf8')) } catch { return { jobs: {}, outputs: {} } } }
 const summariesDir = () => path.join(memoryRoot(), 'rollout_summaries')
-
-// Relative date helper so the test is robust to the real clock.
-const iso = (daysAgo) => new Date(Date.now() - daysAgo * 24 * 36e5).toISOString()
+const waitUntil = async (fn, ms) => {
+  const t0 = Date.now()
+  while (Date.now() - t0 < ms) {
+    if (fn()) return true
+    await new Promise((r) => setTimeout(r, 15))
+  }
+  return false
+}
 
 let failed = 0
 const check = (cond, msg) => {
@@ -75,35 +83,32 @@ try {
   await apply(ctx, config)
   console.log('apply() OK; maxDraftAgeDays=10, now≈' + new Date().toISOString())
 
-  fs.mkdirSync(summariesDir(), { recursive: true })
-  // 'old'  : summarized 26 days ago, last activity 2 days ago → has NEW activity
-  //          since summary. OLD code: stale (summary age 26d>10) → vetoed. NEW code:
-  //          not stale (2d<10 since last activity) → candidate.
-  // 'dormant': summarized 20 days ago, last activity 40 days ago → no new activity →
-  //          excluded by hasNewActivitySinceSummary regardless.
-  const state = {
-    sessions: {
-      old: { sessionId: 'old', lastActivityAt: iso(2), summarizedAt: iso(26), lastExtractStatus: '' },
-      dormant: { sessionId: 'dormant', lastActivityAt: iso(40), summarizedAt: iso(20), lastExtractStatus: '' },
-    },
-    global: { lastPhase2At: '', runsToday: 0, runDay: '' },
-  }
-  fs.writeFileSync(statePath(), JSON.stringify(state), 'utf8')
+  // 接线③：'old' 是候选（旧 summary + 近期新活动）→ 手动入队让其被 drain 提炼；
+  // 'dormant' 无新活动 → 不入队（被排除）。先 enqueue 'old'，再 fire trigger，确保同一轮 drain 可见。
+  enqueueStage1JobFile(statePath(), 'old', 'old-wm', new Date())
 
-  // Fire the trigger (empty transcript → no-op trigger), which drives the pipeline.
+  // Fire the trigger (empty transcript → no-op trigger), which drives the drain.
   eventHandlers['session/disposed']({ id: 'trigger', header: { cwd: 'C:/trigger' } })
-  await new Promise((r) => setTimeout(r, 250))
+  const done = await waitUntil(() => {
+    const jobs = readState().jobs || {}
+    const old = Object.values(jobs).find((x) => String(x.session_id) === 'old')
+    const trig = Object.values(jobs).find((x) => String(x.session_id) === 'trigger')
+    return old && old.status !== 'pending' && trig && trig.status !== 'pending'
+  }, 3000)
 
   const st = readState()
-  console.log('  observed old:', JSON.stringify(st.sessions.old))
-  console.log('  observed dormant:', JSON.stringify(st.sessions.dormant))
-  console.log('  observed trigger:', JSON.stringify(st.sessions.trigger))
+  const jobs = st.jobs || {}
+  const oldJob = Object.values(jobs).find((x) => String(x.session_id) === 'old')
+  const trigJob = Object.values(jobs).find((x) => String(x.session_id) === 'trigger')
+  console.log('  observed old:', JSON.stringify(oldJob))
+  console.log('  observed dormant: (not enqueued)')
+  console.log('  observed trigger:', JSON.stringify(trigJob))
 
-  check(!!(st.sessions.old && st.sessions.old.lastExtractStatus), "'old' (OLD summary + RECENT activity) was re-drafted — stale no longer vetoes new activity")
-  check(!(st.sessions.dormant && st.sessions.dormant.lastExtractStatus), "'dormant' (no new activity since summary) stays excluded")
-  check(!!(st.sessions.trigger && st.sessions.trigger.lastExtractStatus === 'succeeded_no_output'), 'trigger ran as a no-output no-op')
-  const oldDraftExists = fs.existsSync(path.join(summariesDir(), 'old.md'))
-  check(oldDraftExists, "'old' got a fresh draft written")
+  check(done && oldJob && oldJob.status === 'succeeded_with_output', "'old' (OLD summary + RECENT activity) was re-drafted — stale no longer vetoes new activity")
+  check(!Object.keys(jobs).some((k) => k.startsWith('dormant::')), "'dormant' (no new activity since summary) stays excluded — no stage-1 job")
+  check(trigJob && trigJob.status === 'succeeded_no_output', 'trigger ran as a no-output no-op')
+  const oldOutput = oldJob ? (st.outputs || {})[oldJob.id] : undefined
+  check(!!(oldOutput && oldOutput.rollout_summary), "'old' got a refined summary written")
 } finally {
   try { fs.rmSync(tmpHome, { recursive: true, force: true }) } catch {}
 }

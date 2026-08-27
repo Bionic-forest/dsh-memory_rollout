@@ -1,6 +1,6 @@
 // 阶段 A · 接线第①步：session/disposed 只入队（落盘 .stage1-state.json）
-// 验证：事件回调把该会话的 stage-1 作业持久化（watermark=内容指纹），不跑模型；
-// 同一 session+watermark 重复触发去重。保留 kickPipeline（测试兼容），此处只验入队落盘。
+// 接线③：disposer 入队后由 setImmediate 调度的 drainStage1Jobs 消费到期 pending 作业。
+// 验证：disposer 入队 → job 经 drain 消费完成（status 非 pending）；同 session+watermark 去重。
 import assert from 'node:assert'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -20,9 +20,11 @@ const table = (() => {
   }
 })()
 const eventHandlers = {}
+const readSession = async (id) => ({ session: { version: 0, id, cwd: 'C:/' + id, createdAt: 0 }, events: [] })
 const ctx = {
   storageDomain: { open: async () => ({ table: (name) => table, close: async () => {} }) },
-  get: () => undefined, // no sessionQuery, no llm -> trigger is a no-no (empty transcript)
+  // sessionQuery present (persistence path): s1 empty transcript -> drain no_output.
+  get: (k) => (k === 'sessionQuery' ? { readSession } : undefined),
   tools: { register: () => {} },
   systemPrompt: { section: () => {} },
   effect: (fn) => fn(),
@@ -36,6 +38,14 @@ const stateFile = () => path.join(tmp, 'memories', '.stage1-state.json')
 const readJobs = () => {
   try { return JSON.parse(fs.readFileSync(stateFile(), 'utf8')).jobs || {} } catch { return {} }
 }
+const waitUntil = async (fn, ms) => {
+  const t0 = Date.now()
+  while (Date.now() - t0 < ms) {
+    if (fn()) return true
+    await new Promise((r) => setTimeout(r, 15))
+  }
+  return false
+}
 
 let failed = 0
 const check = (cond, msg) => {
@@ -47,21 +57,23 @@ try {
   await apply(ctx, { autoTrigger: 'sessionEnd' })
   assert.ok(eventHandlers['session/disposed'], 'session/disposed handler registered')
 
-  console.log('[1] session/disposed enqueues a persistent stage-1 job (event-only)')
+  console.log('[1] session/disposed enqueues then drain consumes to a terminal status')
   const sess = { id: 's1', header: { cwd: 'C:/s1' }, deriveMessages: () => [] }
   eventHandlers['session/disposed'](sess)
-  await new Promise((r) => setTimeout(r, 120))
+  const drained1 = await waitUntil(() => {
+    const j = Object.values(readJobs()).find((x) => String(x.session_id) === 's1')
+    return j && j.status !== 'pending'
+  }, 3000)
+  check(drained1, 'the s1 job was drained to a terminal status (no longer pending)')
   const jobs = readJobs()
-  const keys = Object.keys(jobs)
-  check(keys.some((k) => k.startsWith('s1::')), 'a job for session s1 (key=session::watermark) was persisted')
-  const j1 = keys.filter((k) => k.startsWith('s1::'))[0]
-  check(j1 && jobs[j1].status === 'pending', 'the persisted job is pending')
+  const j1 = Object.values(jobs).find((x) => String(x.session_id) === 's1')
+  check(j1 && j1.status === 'succeeded_no_output', 'the s1 job succeeded (no-output, empty transcript)')
 
   console.log('[2] duplicate session+watermark is deduped on re-trigger')
   eventHandlers['session/disposed'](sess)
   await new Promise((r) => setTimeout(r, 120))
   const jobs2 = readJobs()
-  check(Object.keys(jobs2).filter((k) => k.startsWith('s1::')).length === 1, 'still exactly one s1 job (deduped, no duplicate)')
+  check(Object.values(jobs2).filter((x) => String(x.session_id) === 's1').length === 1, 'still exactly one s1 job (deduped, no duplicate)')
 } finally {
   try { fs.rmSync(tmp, { recursive: true, force: true }) } catch {}
 }

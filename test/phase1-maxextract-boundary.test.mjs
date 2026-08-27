@@ -2,7 +2,10 @@
 // 对应《向Codex原版系统看齐》§14.2 不变量 / 阶段0 MUST「修复 maxExtractPerTrigger=1 边界超额」。
 // 触发会话始终是第一个候选；旧实现在次级循环里「push 后再 break」，导致
 // maxExtractPerTrigger=1 时仍可能再加入一个次级候选（总数=2）。
-// 修复后：循环顶部先判断预算已满则结束，触发+次级总量 ≤ N。
+//
+// 接线③：disposer 只入队「被处置的那个会话」（触发），不再由 pipelinePhase1 选择次级候选。
+// 因此 maxExtractPerTrigger=1 时，实际被 drain 提炼的只有 trigger 一个 → 总数 ≤ 1。
+// 本测试迁移为：确认 trigger 被 drain 消费完成，且 sec1 没有产生/消费任何作业。
 import assert from 'node:assert'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -49,9 +52,17 @@ const tmp = path.join(os.tmpdir(), 'dsh-rollout-maxextract-' + Date.now())
 process.env.DSH_HOME = tmp
 fs.mkdirSync(tmp, { recursive: true })
 const memoryRoot = () => path.join(tmp, 'memories')
-const statePath = () => path.join(memoryRoot(), '.pipeline-state.json')
-const readState = () => { try { return JSON.parse(fs.readFileSync(statePath(), 'utf8')) } catch { return { sessions: {} } } }
-const iso = (daysAgo) => new Date(Date.now() - daysAgo * 24 * 36e5).toISOString()
+const stateFile = () => path.join(memoryRoot(), '.stage1-state.json')
+const readJobs = () => { try { return JSON.parse(fs.readFileSync(stateFile(), 'utf8')).jobs || {} } catch { return {} } }
+const readOutputs = () => { try { return JSON.parse(fs.readFileSync(stateFile(), 'utf8')).outputs || {} } catch { return {} } }
+const waitUntil = async (fn, ms) => {
+  const t0 = Date.now()
+  while (Date.now() - t0 < ms) {
+    if (fn()) return true
+    await new Promise((r) => setTimeout(r, 15))
+  }
+  return false
+}
 
 let failed = 0
 const check = (cond, msg) => {
@@ -64,24 +75,25 @@ try {
   await apply(ctx, config)
   console.log('apply() OK; maxExtractPerTrigger=1')
 
-  // sec1: summarized long ago + recent activity → would qualify as a secondary
-  // candidate if the budget allowed. With maxExtract=1 the trigger consumes the
-  // whole budget, so sec1 must NOT be distilled.
-  fs.mkdirSync(memoryRoot(), { recursive: true })
-  fs.writeFileSync(statePath(), JSON.stringify({
-    sessions: { sec1: { sessionId: 'sec1', lastActivityAt: iso(1), summarizedAt: iso(20), lastExtractStatus: '' } },
-    global: { lastPhase2At: '', runsToday: 0, runDay: '' },
-  }), 'utf8')
-
+  // trigger（被处置会话）是唯一被 enqueue 的作业；sec1 不在 stage-1 队列里 → 不提炼。
   eventHandlers['session/disposed']({ id: 'trig', header: { cwd: 'C:/trig' } })
-  await new Promise((r) => setTimeout(r, 250))
+  const trigDone = await waitUntil(() => {
+    const j = Object.values(readJobs()).find((x) => String(x.session_id) === 'trig')
+    return j && j.status !== 'pending'
+  }, 3000)
+  if (trigDone) console.log('  trigger drained:', JSON.stringify(Object.values(readJobs()).find((x) => String(x.session_id) === 'trig')))
 
-  const st = readState()
-  console.log('  trigger:', JSON.stringify(st.sessions.trig))
-  console.log('  sec1:', JSON.stringify(st.sessions.sec1))
+  const jobs = readJobs()
+  const trigJob = Object.values(jobs).find((x) => String(x.session_id) === 'trig')
+  const hasSec1Job = Object.keys(jobs).some((k) => k.startsWith('sec1::'))
 
-  check(!!(st.sessions.trig && st.sessions.trig.lastExtractStatus), 'trigger session was distilled (it is the primary candidate)')
-  check(!(st.sessions.sec1 && st.sessions.sec1.lastExtractStatus), 'sec1 was NOT distilled — budget of 1 counted the trigger, total ≤ 1')
+  check(trigDone && trigJob, 'trigger session was distilled (primary candidate, drained to terminal)')
+  check(trigJob && trigJob.status === 'succeeded_with_output', 'trigger drained with output (llm returned a summary)')
+  check(!hasSec1Job, 'sec1 was NOT distilled — budget of 1 counted the trigger, total ≤ 1')
+  if (trigJob) {
+    const out = readOutputs()[trigJob.id]
+    check(!!(out && out.rollout_summary === 'sum'), 'trigger output rollout_summary reflects the extraction')
+  }
 } finally {
   try { fs.rmSync(tmp, { recursive: true, force: true }) } catch {}
 }

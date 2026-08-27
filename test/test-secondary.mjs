@@ -1,16 +1,21 @@
 // One-off isolated test for the secondary-candidate no-op fix (P0 #2 follow-up).
-// Verifies that a SECONDARY candidate never writes its raw transcript as a summary:
+// 原意：次级候选绝不把原始 transcript 写成摘要：
 //   - with no LLM and real content → 'failed' (nothing written)
 //   - with LLM ok → with_output (refined summary written)
 //   - with LLM empty summary → no_output (nothing written)
 //   - with no LLM and short content → no_output (nothing written)
+//
+// 接线③：disposer 只 enqueue「被处置的那个会话」（trigger）；次级候选不再由 pipelinePhase1
+// 选择，而是作为一条独立的 stage-1 作业被 enqueue 后由 drain 消费。本测试手动 enqueue 'sec'
+// 模拟次级候选入队，让 drain 按与 trigger 相同的提炼流程分类 outcome，并断言「原始 transcript
+// 从不被写成摘要」（输出的是 refined 摘要或为空）。
 import assert from 'node:assert'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
 const PLUGIN = 'file:///D:/%E8%BD%AF%E4%BB%B6/Deepseek/plugins/dsh-rollout/lib/index.js'
-const { apply } = await import(PLUGIN)
+const { apply, enqueueStage1JobFile } = await import(PLUGIN)
 
 let failed = 0
 const check = (cond, msg) => {
@@ -50,6 +55,15 @@ function makeLlm(mode) {
       }
     },
   }
+}
+
+const waitUntil = async (fn, ms) => {
+  const t0 = Date.now()
+  while (Date.now() - t0 < ms) {
+    if (fn()) return true
+    await new Promise((r) => setTimeout(r, 15))
+  }
+  return false
 }
 
 async function runSecondary({ secMessage, llmMode /* 'none' | 'ok' | 'empty' */ }) {
@@ -99,37 +113,33 @@ async function runSecondary({ secMessage, llmMode /* 'none' | 'ok' | 'empty' */ 
   }
   await apply(ctx, config)
 
-  // Seed 'sec' as an idle session WITH new activity (so it's a secondary candidate).
-  const now = Date.now()
-  const seededSummarizedAt = new Date(now - 3 * 86400e3).toISOString()
-  const statePath = path.join(tmp, 'memories', '.pipeline-state.json')
-  fs.writeFileSync(
-    statePath,
-    JSON.stringify({
-      sessions: {
-        sec: {
-          sessionId: 'sec',
-          lastActivityAt: new Date(now - 2 * 3600e3).toISOString(),
-          summarizedAt: seededSummarizedAt,
-          lastExtractStatus: '',
-        },
-      },
-      global: { lastPhase2At: '', runsToday: 0, runDay: '' },
-    }),
-    'utf8',
-  )
+  const stage1File = path.join(tmp, 'memories', '.stage1-state.json')
+  const readStage1 = () => { try { return JSON.parse(fs.readFileSync(stage1File, 'utf8')) } catch { return { jobs: {}, outputs: {} } } }
+
+  // 接线③：次级候选不再是 pipelinePhase1 的选择结果 —— 这里手动 enqueue 一条 'sec' 作业，
+  // 模拟「次级候选入队」，由 disposer 排定的同一轮 drain 消费。先 enqueue，再 fire trigger，
+  // 确保 drain 开始时两条作业（trigger + sec）都已就绪。
+  enqueueStage1JobFile(stage1File, 'sec', 'sec-wm', new Date())
 
   assert.ok(eventHandlers['session/disposed'], 'session/disposed handler registered')
   eventHandlers['session/disposed']({ id: 'trig', header: { cwd: 'C:/trig' } })
-  await new Promise((r) => setTimeout(r, 220))
+  const done = await waitUntil(() => {
+    const st = readStage1().jobs || {}
+    const trig = Object.values(st).find((x) => String(x.session_id) === 'trig')
+    const sec = Object.values(st).find((x) => String(x.session_id) === 'sec')
+    return sec && sec.status !== 'pending' && trig && trig.status !== 'pending'
+  }, 3000)
 
-  let state = null
-  try { state = JSON.parse(fs.readFileSync(statePath, 'utf8')) } catch {}
+  const st = readStage1()
+  const jobs = st.jobs || {}
+  const outputs = st.outputs || {}
+  const secJob = Object.values(jobs).find((x) => String(x.session_id) === 'sec')
+  const trigJob = Object.values(jobs).find((x) => String(x.session_id) === 'trig')
+  const secOutput = secJob ? outputs[secJob.id] : undefined
   const secDraft = path.join(tmp, 'memories', 'rollout_summaries', 'sec.md')
   const existsDraft = fs.existsSync(secDraft)
-  const draftText = existsDraft ? fs.readFileSync(secDraft, 'utf8') : ''
   fs.rmSync(tmp, { recursive: true, force: true })
-  return { existsDraft, draftText, sec: state && state.sessions.sec, seededSummarizedAt }
+  return { done, secJob, secOutput, existsDraft, trigJob }
 }
 
 const LONG = 'the deployment used a stable release with all the tests passing in one go today'
@@ -139,36 +149,41 @@ const SHORT = 'hi'
 console.log('[1] secondary, no LLM, real content → failed, raw transcript NOT written')
 {
   const r = await runSecondary({ secMessage: LONG, llmMode: 'none' })
-  check(r.existsDraft === false, 'no draft written for secondary (no LLM)')
-  check(r.sec && r.sec.lastExtractStatus === 'failed', 'secondary status = failed')
-  check(r.sec && r.sec.summarizedAt === r.seededSummarizedAt, 'secondary summarizedAt not advanced (pending retry)')
+  check(r.done, 'secondary job submitted (drain completed)')
+  check(r.secJob && r.secJob.status === 'failed_retryable', 'secondary status = failed_retryable')
+  check(r.secOutput === undefined, 'no output written for secondary (no LLM)')
+  check(r.existsDraft === false, 'no draft written for secondary')
 }
 
 // ── 2) secondary + LLM ok → with_output, refined summary written ──────────
 console.log('[2] secondary, LLM ok → with_output, refined summary written')
 {
   const r = await runSecondary({ secMessage: LONG, llmMode: 'ok' })
-  check(r.existsDraft === true, 'draft written for secondary')
-  check(r.draftText.includes('good durable summary'), 'secondary draft has refined summary (not raw)')
-  check(r.draftText.indexOf('the deployment used a stable') === -1, 'secondary draft does NOT contain raw transcript')
-  check(r.sec && r.sec.lastExtractStatus === 'succeeded_with_output', 'secondary status = succeeded_with_output')
-  check(r.sec && !!r.sec.summarizedAt, 'secondary summarizedAt advanced')
+  check(r.done, 'secondary job submitted (drain completed)')
+  check(r.secJob && r.secJob.status === 'succeeded_with_output', 'secondary status = succeeded_with_output')
+  check(r.secOutput && r.secOutput.rollout_summary === 'good durable summary', 'secondary output has refined summary (not raw)')
+  check(r.secOutput && r.secOutput.rollout_summary.indexOf('the deployment used a stable') === -1, 'secondary output does NOT contain raw transcript')
+  check(r.existsDraft === false, 'no draft file written (output lives in stage1-state)')
 }
 
 // ── 3) secondary + LLM empty summary → no_output, nothing written ─────────
 console.log('[3] secondary, LLM empty summary → no_output, nothing written')
 {
   const r = await runSecondary({ secMessage: LONG, llmMode: 'empty' })
-  check(r.existsDraft === false, 'no draft written for secondary (empty summary)')
-  check(r.sec && r.sec.lastExtractStatus === 'succeeded_no_output', 'secondary status = succeeded_no_output')
+  check(r.done, 'secondary job submitted (drain completed)')
+  check(r.secJob && r.secJob.status === 'succeeded_no_output', 'secondary status = succeeded_no_output')
+  check(r.secOutput === undefined, 'no output written for secondary (empty summary)')
+  check(r.existsDraft === false, 'no draft written for secondary')
 }
 
 // ── 4) secondary + no LLM + short content → no_output, nothing written ────
 console.log('[4] secondary, no LLM, short content → no_output, nothing written')
 {
   const r = await runSecondary({ secMessage: SHORT, llmMode: 'none' })
-  check(r.existsDraft === false, 'no draft written for short secondary')
-  check(r.sec && r.sec.lastExtractStatus === 'succeeded_no_output', 'secondary status = succeeded_no_output')
+  check(r.done, 'secondary job submitted (drain completed)')
+  check(r.secJob && r.secJob.status === 'succeeded_no_output', 'secondary status = succeeded_no_output')
+  check(r.secOutput === undefined, 'no output written for secondary (short content)')
+  check(r.existsDraft === false, 'no draft written for secondary')
 }
 
 console.log(`\n${failed === 0 ? 'ALL SECONDARY-NOOP TESTS PASSED' : failed + ' TESTS FAILED'}`)

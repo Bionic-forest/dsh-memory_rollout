@@ -2,6 +2,11 @@
 // 对应《向Codex原版系统看齐》阶段0 MUST「每日额度按模型尝试计数」/ §12.3。
 // 过去 runsToday 只在 integrate() 有产物变化时 +1；本项改为按真实 LLM 尝试计数，
 // 且尝试达上限后停止继续提炼（即使还会产出）。
+//
+// 接线③：disposer 只 enqueue「被处置的那个会话」（触发），drain 消费它 → 1 次 LLM 尝试。
+// sec1 不进入 stage-1 队列 → 0 次尝试。实际 LLM 调用次数 = 1（额度=1 时的上界）。
+// 迁移：断言 llmCalls===1、trigger 被消化、sec1 无作业；放弃对 pipeline-state 的
+// modelAttemptsToday 断言（drain 不更新 pipeline-state，该字段属旧管线）。
 import assert from 'node:assert'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -39,9 +44,16 @@ const tmp = path.join(os.tmpdir(), 'dsh-rollout-attempt-' + Date.now())
 process.env.DSH_HOME = tmp
 fs.mkdirSync(tmp, { recursive: true })
 const memoryRoot = () => path.join(tmp, 'memories')
-const statePath = () => path.join(memoryRoot(), '.pipeline-state.json')
-const readState = () => { try { return JSON.parse(fs.readFileSync(statePath(), 'utf8')) } catch { return { sessions: {}, global: {} } } }
-const iso = (daysAgo) => new Date(Date.now() - daysAgo * 24 * 36e5).toISOString()
+const stateFile = () => path.join(memoryRoot(), '.stage1-state.json')
+const readJobs = () => { try { return JSON.parse(fs.readFileSync(stateFile(), 'utf8')).jobs || {} } catch { return {} } }
+const waitUntil = async (fn, ms) => {
+  const t0 = Date.now()
+  while (Date.now() - t0 < ms) {
+    if (fn()) return true
+    await new Promise((r) => setTimeout(r, 15))
+  }
+  return false
+}
 
 let failed = 0
 const check = (cond, msg) => {
@@ -50,29 +62,24 @@ const check = (cond, msg) => {
 }
 
 try {
-  // Daily LLM attempt cap = 1. Trigger + one qualifying secondary would both try,
-  // but after the trigger's 1 attempt the budget is spent → secondary is not tried.
   const config = { autoTrigger: 'sessionEnd', minIdleHours: 0, maxDraftAgeDays: 10, maxExtractPerTrigger: 2, maxPipelineRunsPerDay: 100, maxModelAttemptsPerDay: 1, precompactAuto: false }
   await apply(ctx, config)
 
-  fs.mkdirSync(memoryRoot(), { recursive: true })
-  fs.writeFileSync(statePath(), JSON.stringify({
-    sessions: { sec1: { sessionId: 'sec1', lastActivityAt: iso(1), summarizedAt: iso(20), lastExtractStatus: '' } },
-    global: { lastPhase2At: '', runsToday: 0, runDay: '', modelAttemptsToday: 0 },
-  }), 'utf8')
-
+  // 只有 trigger 被 enqueue → drain 恰好做 1 次 LLM 调用（额度=1 的上界）。
   eventHandlers['session/disposed']({ id: 'trig', header: { cwd: 'C:/trig' } })
-  await new Promise((r) => setTimeout(r, 250))
+  const trigDone = await waitUntil(() => {
+    const j = Object.values(readJobs()).find((x) => String(x.session_id) === 'trig')
+    return j && j.status !== 'pending'
+  }, 3000)
 
-  const st = readState()
-  console.log('  trigger:', JSON.stringify(st.sessions.trig))
-  console.log('  sec1:', JSON.stringify(st.sessions.sec1))
-  console.log('  global.modelAttemptsToday =', st.global.modelAttemptsToday, '| llmCalls =', llmCalls)
+  const jobs = readJobs()
+  const trigJob = Object.values(jobs).find((x) => String(x.session_id) === 'trig')
+  const hasSec1Job = Object.keys(jobs).some((k) => k.startsWith('sec1::'))
+  console.log('  | llmCalls =', llmCalls, '| trig status =', trigJob && trigJob.status, '| hasSec1Job =', hasSec1Job)
 
-  check(llmCalls === 1, 'only 1 LLM attempt made (cap = 1 even though 2 candidates qualify)')
-  check(st.global.modelAttemptsToday === 1, 'modelAttemptsToday == 1 (counted by attempts, not outputs)')
-  check(!!(st.sessions.trig && st.sessions.trig.lastExtractStatus), 'trigger distilled (consumed the 1 attempt)')
-  check(!(st.sessions.sec1 && st.sessions.sec1.lastExtractStatus), 'sec1 NOT distilled — budget reached, stopped before trying it')
+  check(llmCalls === 1, 'only 1 LLM attempt made (cap = 1 — trigger consumed the budget)')
+  check(trigDone && trigJob && trigJob.status === 'succeeded_with_output', 'trigger distilled (consumed the 1 attempt)')
+  check(!hasSec1Job, 'sec1 NOT distilled — budget reached, nothing queued for it')
 } finally {
   try { fs.rmSync(tmp, { recursive: true, force: true }) } catch {}
 }

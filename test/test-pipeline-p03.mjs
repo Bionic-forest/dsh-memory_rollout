@@ -1,7 +1,8 @@
 // One-off isolated test for P0-3: secondary-candidate draft nesting is gone.
-// Drives the real pipelinePhase1 via the session/disposed event, with a mocked
-// sessionQuery (empty persisted events) so we can prove the secondary candidate
-// reads from PERSISTENCE (empty → no-op) instead of re-wrapping the old draft.
+// 接线③：disposer 只 enqueue「被处置的那个会话」（trigger），不再由 pipelinePhase1 选择次级候选。
+// 因此 secNoNew / secNew 不会作为次级候选被重新提炼/重写 → 原草稿保持 byte-identical、无套娃。
+// 迁移：断言 trigger 经 drain 消费为 no_output（空 transcript），且 secNoNew/secNew 无任何
+// stage-1 作业（次级候选不再被 re-drafted），草稿原样保留。
 import assert from 'node:assert'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -23,7 +24,7 @@ const table = (() => {
 
 const eventHandlers = {}
 const queryMock = {
-  readSession: async (id) => ({ session: { cwd: 'C:/' + id }, events: [] }),
+  readSession: async (id) => ({ session: { version: 0, id, cwd: 'C:/' + id, createdAt: 0 }, events: [] }),
 }
 const ctx = {
   storageDomain: { open: async () => ({ table: (name) => table, close: async () => {} }) },
@@ -47,8 +48,16 @@ const check = (cond, msg) => {
 const memoryRoot = () => path.join(tmpHome, 'memories')
 const summariesDir = () => path.join(memoryRoot(), 'rollout_summaries')
 const readDraft = (name) => fs.readFileSync(path.join(summariesDir(), name), 'utf8')
-const statePath = () => path.join(memoryRoot(), '.pipeline-state.json')
-const readState = () => JSON.parse(fs.readFileSync(statePath(), 'utf8'))
+const stage1File = () => path.join(memoryRoot(), '.stage1-state.json')
+const readStage1 = () => { try { return JSON.parse(fs.readFileSync(stage1File(), 'utf8')) } catch { return { jobs: {} } } }
+const waitUntil = async (fn, ms) => {
+  const t0 = Date.now()
+  while (Date.now() - t0 < ms) {
+    if (fn()) return true
+    await new Promise((r) => setTimeout(r, 15))
+  }
+  return false
+}
 
 try {
   const config = {
@@ -70,36 +79,26 @@ try {
   fs.writeFileSync(path.join(summariesDir(), 'secNoNew.md'), noNewDraft)
   fs.writeFileSync(path.join(summariesDir(), 'secNew.md'), newDraft)
 
-  fs.writeFileSync(
-    statePath(),
-    JSON.stringify({
-      sessions: {
-        secNoNew: { sessionId: 'secNoNew', lastActivityAt: '2026-08-20T00:00:00.000Z', summarizedAt: '2026-08-21T00:00:00.000Z' },
-        secNew: { sessionId: 'secNew', lastActivityAt: '2026-08-26T00:00:00.000Z', summarizedAt: '2026-08-20T00:00:00.000Z' },
-      },
-      global: { lastPhase2At: '', runsToday: 0, runDay: '' },
-    }),
-    'utf8',
-  )
-
   // Fire the session/disposed handler with a fake trigger session.
   assert.ok(eventHandlers['session/disposed'], 'session/disposed handler registered')
   eventHandlers['session/disposed']({ id: 'trigger', header: { cwd: 'C:/trigger' } })
-  // Let the setImmediate-scheduled pipeline (async) finish.
-  await new Promise((r) => setTimeout(r, 200))
+  const trigDone = await waitUntil(() => {
+    const j = Object.values(readStage1().jobs || {}).find((x) => String(x.session_id) === 'trigger')
+    return j && j.status !== 'pending'
+  }, 3000)
 
   console.log('\n[P0-3] no-new-activity secondary must NOT be re-drafted (no nesting)')
   check(readDraft('secNoNew.md') === noNewDraft, 'secNoNew draft byte-identical (skipped, not rewritten)')
-  check(readDraft('secNew.md') === newDraft, 'secNew draft byte-identical (read raw persistence → empty → no rewrite, NOT re-wrapped)')
-  const trigRec = readState().sessions.trigger
-  check(trigRec && trigRec.lastExtractStatus === 'succeeded_no_output', 'trigger is a no-output no-op (empty transcript) — proves pipeline ran')
+  check(readDraft('secNew.md') === newDraft, 'secNew draft byte-identical (not re-wrapped)')
+
+  const jobs = readStage1().jobs || {}
+  const trigJob = Object.values(jobs).find((x) => String(x.session_id) === 'trigger')
+  check(trigDone && trigJob && trigJob.status === 'succeeded_no_output', 'trigger is a no-output no-op (empty transcript) — proves drain ran')
+  check(!Object.keys(jobs).some((k) => k.startsWith('secNoNew::')), 'no stage-1 job for secNoNew (skipped, not re-drafted)')
+  check(!Object.keys(jobs).some((k) => k.startsWith('secNew::')), 'no stage-1 job for secNew (secondary no longer selected by disposer)')
   check(fs.existsSync(path.join(summariesDir(), 'trigger.md')) === false, 'no empty trigger draft written (no-op)')
 
-  console.log('\n[P0-3] pipeline state reflects no re-summarization of unchanged sessions')
-  const st = readState()
-  check(st.sessions.secNoNew.summarizedAt === '2026-08-21T00:00:00.000Z', 'secNoNew summarizedAt unchanged')
-  check(st.sessions.secNew.summarizedAt === '2026-08-20T00:00:00.000Z', 'secNew summarizedAt unchanged (empty raw → no-op, not marked)')
-  // The old bundling bug would REWRITE secNoNew (writing its own markdown as the new summary).
+  console.log('\n[P0-3] pipeline drafts are untouched (no re-summarization / no nesting)')
   const rewrapReproducer = fs.readFileSync(path.join(summariesDir(), 'secNoNew.md'), 'utf8')
   check(rewrapReproducer.indexOf(noNewDraft) !== -1 && !rewrapReproducer.includes('## 原始字面快照'), 'no nested-draft growth marker')
 } finally {

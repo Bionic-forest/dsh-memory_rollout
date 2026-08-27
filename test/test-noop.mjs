@@ -1,7 +1,10 @@
 // One-off isolated test for the no-op / failure fallback fix (P0 #2).
-// Drives the real pipelinePhase1 via session/disposed with a mocked ctx.llm so we
-// can classify outcome as with_output / no_output / failed and verify the raw
-// transcript is NEVER written as a memory draft.
+// 接线③：disposer 只入队，drainStage1Jobs 消费并分类 outcome（with_output / no_output /
+// failed_retryable）。验证 raw transcript 从不以「原始字面快照」被写成记忆草稿：
+//  - 失败/无信号 → 无产物（no_output / failed_retryable），不落任何输出；
+//  - with_output → 输出的是提炼后的摘要，而非原始 transcript。
+// 原先断言「草稿文件内容 / lastExtractStatus」迁移为「.stage1-state.json 的 job.status 与
+// outputs[job.id].rollout_summary」。
 import assert from 'node:assert'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -17,16 +20,17 @@ const check = (cond, msg) => {
 }
 
 const memoryRoot = (home) => path.join(home, 'memories')
-const statePath = (home) => path.join(memoryRoot(home), '.pipeline-state.json')
-const draftPath = (home, sid) =>
-  path.join(memoryRoot(home), 'rollout_summaries', sid.replace(/[^a-z0-9-]+/gi, '-') + '.md')
+const stage1File = (home) => path.join(memoryRoot(home), '.stage1-state.json')
+
+const msgEvent = (id, text) => ({
+  type: 'user/message', seq: 0, time: 0, surfaceOp: 'append',
+  data: { id, role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text }] },
+})
 
 // Fake LLM: `mode` ∈ 'ok' (real summary) | 'empty' (no summary) | 'fail' (throws).
 function makeLlm(mode) {
   return {
     stream: () => {
-      // A bad route throws synchronously here (like the real service); a good
-      // route returns an async-iterable stream.
       if (mode === 'fail') throw new Error('simulated llm failure')
       const doc =
         mode === 'ok'
@@ -40,6 +44,15 @@ function makeLlm(mode) {
       }
     },
   }
+}
+
+const waitUntil = async (fn, ms) => {
+  const t0 = Date.now()
+  while (Date.now() - t0 < ms) {
+    if (fn()) return true
+    await new Promise((r) => setTimeout(r, 15))
+  }
+  return false
 }
 
 async function runScenario({ sessionId, messageText, llmMode }) {
@@ -58,12 +71,17 @@ async function runScenario({ sessionId, messageText, llmMode }) {
   })()
   const eventHandlers = {}
   const llm = makeLlm(llmMode)
+  const readSession = async (id) => ({
+    session: { version: 0, id, cwd: 'C:/' + id, createdAt: 0 },
+    events: [msgEvent(id, messageText)],
+  })
   const ctx = {
     storageDomain: { open: async () => ({ table: (name) => table, close: async () => {} }) },
     get: (k) => {
+      if (k === 'sessionQuery') return { readSession }
       if (k === 'llm') return llm
       if (k === 'agentDefaultModel') return { currentSelection: () => ({ provider: 'mock', model: 'mock-1' }) }
-      return undefined // no sessionQuery → live-object path for the trigger
+      return undefined
     },
     tools: { register: () => {} },
     systemPrompt: { section: () => {} },
@@ -90,56 +108,61 @@ async function runScenario({ sessionId, messageText, llmMode }) {
   }
   assert.ok(eventHandlers['session/disposed'], 'session/disposed handler registered')
   eventHandlers['session/disposed'](trigger)
-  await new Promise((r) => setTimeout(r, 200))
+  const done = await waitUntil(() => {
+    const s = readStage1(tmp)
+    const j = Object.values(s.jobs).find((x) => String(x.session_id) === sessionId)
+    return j && j.status !== 'pending'
+  }, 3000)
 
-  let state = null
-  try { state = JSON.parse(fs.readFileSync(statePath(tmp), 'utf8')) } catch {}
-  const existsDraft = fs.existsSync(draftPath(tmp, sessionId))
-  const draftText = existsDraft ? fs.readFileSync(draftPath(tmp, sessionId), 'utf8') : ''
+  const st = readStage1(tmp)
+  const job = Object.values(st.jobs).find((x) => String(x.session_id) === sessionId)
+  const output = job ? (st.outputs && st.outputs[job.id]) : undefined
   fs.rmSync(tmp, { recursive: true, force: true })
-  return { existsDraft, draftText, state }
+  return { done, job, output }
 }
 
-// ── scenario 1: LLM fails → no draft, no raw written, summarizedAt NOT advanced, status failed ──
-console.log('[1] LLM failure → failed, raw transcript NOT written')
+function readStage1(home) {
+  try { return JSON.parse(fs.readFileSync(stage1File(home), 'utf8')) } catch { return { jobs: {}, outputs: {} } }
+}
+
+// ── scenario 1: LLM fails → failed_retryable, no output, raw transcript NOT written ──
+console.log('[1] LLM failure → failed_retryable, raw transcript NOT written')
 {
   const r = await runScenario({ sessionId: 'fail-session', messageText: 'credential secret here is a long enough message to attempt real extraction of the api key sk-abcdef1234567890', llmMode: 'fail' })
-  const rec = r.state && r.state.sessions['fail-session']
-  check(r.existsDraft === false, 'no draft written on LLM failure')
-  check(rec && rec.lastExtractStatus === 'failed', 'status recorded as failed')
-  check(rec && (rec.summarizedAt === '' || rec.summarizedAt === undefined), 'summarizedAt NOT advanced (pending retry)')
+  check(r.done, 'job submitted (drain completed)')
+  check(r.job && r.job.status === 'failed_retryable', 'status recorded as failed_retryable')
+  check(r.job && (!r.job.completed_at), 'failed_retryable NOT completed (pending retry)')
+  check(r.output === undefined, 'no output written on LLM failure')
 }
 
-// ── scenario 2: short session (<60) → no-op, no draft, summarizedAt advanced, status no_output ──
-console.log('[2] short session (<60 chars) → no-op, no draft')
+// ── scenario 2: short session (<60) → no-op, no output, no draft ──
+console.log('[2] short session (<60 chars) → no-op, no output')
 {
   const r = await runScenario({ sessionId: 'short-session', messageText: 'hi', llmMode: 'ok' })
-  const rec = r.state && r.state.sessions['short-session']
-  check(r.existsDraft === false, 'no draft written for short session')
-  check(rec && rec.lastExtractStatus === 'succeeded_no_output', 'status recorded as succeeded_no_output')
-  check(rec && !!rec.summarizedAt, 'summarizedAt advanced (terminal no-op)')
+  check(r.done, 'job submitted (drain completed)')
+  check(r.job && r.job.status === 'succeeded_no_output', 'status recorded as succeeded_no_output')
+  check(r.job && !!r.job.completed_at, 'completed_at set (terminal no-op)')
+  check(r.output === undefined, 'no output written for short session')
 }
 
-// ── scenario 3: model returns empty summary → no-op, no draft ──
-console.log('[3] empty model summary → no-op, no draft')
+// ── scenario 3: model returns empty summary → no-op, no output ──
+console.log('[3] empty model summary → no-op, no output')
 {
   const r = await runScenario({ sessionId: 'empty-session', messageText: 'this message is definitely long enough to be eligible for a real extraction attempt by the model', llmMode: 'empty' })
-  const rec = r.state && r.state.sessions['empty-session']
-  check(r.existsDraft === false, 'no draft written when model returns empty summary')
-  check(rec && rec.lastExtractStatus === 'succeeded_no_output', 'status recorded as succeeded_no_output')
-  check(rec && !!rec.summarizedAt, 'summarizedAt advanced (terminal no-op)')
+  check(r.done, 'job submitted (drain completed)')
+  check(r.job && r.job.status === 'succeeded_no_output', 'status recorded as succeeded_no_output')
+  check(r.job && !!r.job.completed_at, 'completed_at set (terminal no-op)')
+  check(r.output === undefined, 'no output written when model returns empty summary')
 }
 
-// ── scenario 4: normal session → with_output, draft written, summarizedAt advanced ──
+// ── scenario 4: normal session → with_output, refined summary (no raw transcript) ──
 console.log('[4] normal session → with_output, refined summary written (no regression)')
 {
   const r = await runScenario({ sessionId: 'ok-session', messageText: 'the user decided to use pnpm for this project and set up a build config so we can test the pipeline', llmMode: 'ok' })
-  const rec = r.state && r.state.sessions['ok-session']
-  check(r.existsDraft === true, 'draft written for a real session')
-  check(r.draftText.includes('good durable summary'), 'draft contains the refined summary')
-  check(r.draftText.includes('sk-abcdef1234567890') === false, 'draft has no raw secret (redaction intact)')
-  check(rec && rec.lastExtractStatus === 'succeeded_with_output', 'status recorded as succeeded_with_output')
-  check(rec && !!rec.summarizedAt, 'summarizedAt advanced')
+  check(r.done, 'job submitted (drain completed)')
+  check(r.job && r.job.status === 'succeeded_with_output', 'status recorded as succeeded_with_output')
+  check(r.output && r.output.rollout_summary === 'good durable summary', 'output carries the refined summary')
+  check(r.output && r.output.rollout_summary.indexOf('the user decided') === -1, 'output is refined, does NOT contain raw transcript')
 }
 
 console.log(`\n${failed === 0 ? 'ALL NO-OP TESTS PASSED' : failed + ' TESTS FAILED'}`)

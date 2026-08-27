@@ -1,7 +1,7 @@
 // One-off isolated test for secret redaction (P0 first item).
 //  (A) unit tests of the exported `redactSecrets`.
 //  (B) memory_remember (entries write) redacts on disk.
-//  (C) pipeline: a session whose transcript holds secrets → draft file is redacted.
+//  (C) pipeline: a session whose transcript holds secrets → the extract output is redacted.
 import assert from 'node:assert'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -101,8 +101,8 @@ console.log('\n[B] memory_remember redacts before writing the entry')
   }
 }
 
-// ── (C) pipeline: secret in the transcript is redacted in the written draft ──
-console.log('\n[C] pipeline draft write redacts secrets (D1 transcript + D3 write)')
+// ── (C) pipeline: secret in the transcript is redacted in the extract output ──
+console.log('\n[C] pipeline extract output redacts secrets (D1 transcript + D3 write)')
 {
   const tools = {}
   const eventHandlers = {}
@@ -110,12 +110,17 @@ console.log('\n[C] pipeline draft write redacts secrets (D1 transcript + D3 writ
   process.env.DSH_HOME = tmp
   fs.mkdirSync(tmp, { recursive: true })
   try {
-    const { ctx } = makeCtx(tools, eventHandlers, undefined) // no query plugin → live-object path
+    const { ctx } = makeCtx(tools, eventHandlers, undefined)
     let llmInput = ''
+    const msgEvent = {
+      type: 'user/message', seq: 0, time: 0, surfaceOp: 'append',
+      data: { id: 'trig', role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'the api key is sk-abcDEF123456 and the db Password=P@ssw0rd for our prod deployment on this project' }] },
+    }
+    const readSession = async (id) => ({ session: { version: 0, id, cwd: 'C:/' + id, createdAt: 0 }, events: [msgEvent] })
     // Inject a fake LLM that (a) records the transcript it received and (b) returns
     // a summary that itself echoes a secret — so we can verify both D1 and D3.
     ctx.get = (k) => {
-      if (k === 'sessionQuery') return undefined
+      if (k === 'sessionQuery') return { readSession }
       if (k === 'agentDefaultModel') return { currentSelection: () => ({ provider: 'mock', model: 'mock-1' }) }
       if (k === 'llm') {
         return {
@@ -148,6 +153,17 @@ console.log('\n[C] pipeline draft write redacts secrets (D1 transcript + D3 writ
     }
     await apply(ctx, config)
 
+    const stage1File = path.join(tmp, 'memories', '.stage1-state.json')
+    const readStage1 = () => { try { return JSON.parse(fs.readFileSync(stage1File, 'utf8')) } catch { return { jobs: {}, outputs: {} } } }
+    const waitUntil = async (fn, ms) => {
+      const t0 = Date.now()
+      while (Date.now() - t0 < ms) {
+        if (fn()) return true
+        await new Promise((r) => setTimeout(r, 15))
+      }
+      return false
+    }
+
     // A LONG secret-bearing transcript so the trigger is a with_output (>= 60 chars).
     const secretSession = {
       id: 'trig',
@@ -158,19 +174,24 @@ console.log('\n[C] pipeline draft write redacts secrets (D1 transcript + D3 writ
     }
     assert.ok(eventHandlers['session/disposed'], 'session/disposed handler registered')
     eventHandlers['session/disposed'](secretSession)
-    await new Promise((r) => setTimeout(r, 200))
+    const done = await waitUntil(() => {
+      const j = Object.values(readStage1().jobs || {}).find((x) => String(x.session_id) === 'trig')
+      return j && j.status !== 'pending'
+    }, 3000)
 
     // D1: the transcript handed to the LLM must already be redacted.
     check(llmInput.indexOf('sk-abcDEF123456') === -1 && llmInput.indexOf('P@ssw0rd') === -1, 'D1: LLM input has no raw secret')
     check(llmInput.includes('[REDACTED]'), 'D1: LLM input contains [REDACTED]')
 
-    const draftPath = path.join(tmp, 'memories', 'rollout_summaries', 'trig.md')
-    check(fs.existsSync(draftPath), 'trigger draft written (with_output)')
-    if (fs.existsSync(draftPath)) {
-      const txt = fs.readFileSync(draftPath, 'utf8')
-      check(txt.indexOf('sk-abcDEF123456') === -1 && txt.indexOf('P@ssw0rd') === -1, 'draft has no raw secret (D3)')
-      check(txt.includes('[REDACTED]'), 'draft contains [REDACTED]')
-      check(txt.includes('summary carries [REDACTED]'), 'D3: model-echoed secret redacted in draft')
+    const st = readStage1()
+    const trigJob = Object.values(st.jobs || {}).find((x) => String(x.session_id) === 'trig')
+    check(done && trigJob && trigJob.status === 'succeeded_with_output', 'trigger distilled (with_output)')
+    const output = trigJob ? (st.outputs || {})[trigJob.id] : undefined
+    check(!!output, 'trigger produced an output entry')
+    if (output) {
+      check(output.rollout_summary.indexOf('sk-abcDEF123456') === -1 && output.rollout_summary.indexOf('P@ssw0rd') === -1, 'output has no raw secret (D3)')
+      check(output.rollout_summary.includes('[REDACTED]'), 'output contains [REDACTED]')
+      check(output.rollout_summary.includes('summary carries [REDACTED]'), 'D3: model-echoed secret redacted in output')
     }
   } finally {
     try { fs.rmSync(tmp, { recursive: true, force: true }) } catch {}
