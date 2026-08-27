@@ -6,7 +6,7 @@ import os from 'node:os'
 import path from 'node:path'
 
 const PLUGIN = 'file:///D:/%E8%BD%AF%E4%BB%B6/Deepseek/plugins/dsh-rollout/lib/index.js'
-const { stage1BackoffSeconds, reclaimStage1Jobs, mergeStage1Job, stage1Recover } = await import(PLUGIN)
+const { stage1BackoffSeconds, reclaimStage1Jobs, mergeStage1Job, stage1Recover, claimStage1Job } = await import(PLUGIN)
 
 let failed = 0
 const check = (cond, msg) => {
@@ -85,6 +85,20 @@ console.log('[4] stage1Recover persists lease reclaim across a restart')
   check(reloaded.jobs.live.status === 'running', 'live job stays running on disk')
   check(reloaded.jobs.done.status === 'succeeded_with_output', 'completed job untouched')
   fs.rmSync(dir, { recursive: true, force: true })
+}
+
+// ── claimStage1Job: 领取 + 租约（drain 领取一步） ─────────────────────────────
+console.log('[5] claimStage1Job claims an available pending job and leases it')
+{
+  const now = new Date('2026-08-27T00:00:00.000Z').getTime()
+  const state = { jobs: {} }
+  mergeStage1Job(state, 's2', 'wm-1', new Date(now - 10000)) // pending, available (created earlier)
+  mergeStage1Job(state, 's3', 'wm-2', new Date(now + 10000)) // pending but available_at in FUTURE (not now)
+  const picked = claimStage1Job(state, now, 60000, 'worker-1')
+  check(picked !== null, 'claims an available job')
+  check(picked.status === 'running' && picked.lease_owner === 'worker-1', 'claimed job -> running + owner')
+  check(picked.lease_expires_at === new Date(now + 60000).toISOString(), 'lease set to now + leaseMs')
+  check(claimStage1Job(state, now, 60000, 'worker-2') === null, 'no further available job (future one not due yet)')
 }
 
 console.log(`\n${failed === 0 ? 'ALL STAGE1-STATE TESTS PASSED' : failed + ' TESTS FAILED'}`)
