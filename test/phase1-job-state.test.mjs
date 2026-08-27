@@ -3,7 +3,7 @@
 import assert from 'node:assert'
 
 const PLUGIN = 'file:///D:/%E8%BD%AF%E4%BB%B6/Deepseek/plugins/dsh-rollout/lib/index.js'
-const { stage1BackoffSeconds, reclaimStage1Jobs } = await import(PLUGIN)
+const { stage1BackoffSeconds, reclaimStage1Jobs, mergeStage1Job } = await import(PLUGIN)
 
 let failed = 0
 const check = (cond, msg) => {
@@ -45,6 +45,21 @@ console.log('[2] reclaimStage1Jobs recovers expired/interrupted runs')
   check(state.jobs.live.status === 'running', 'live (unexpired) stays running')
   check(state.jobs.done.status === 'succeeded_with_output', 'completed job untouched')
   check(state.jobs.pending.status === 'pending', 'already-pending untouched')
+}
+
+// ── mergeStage1Job: 去重入队 ─────────────────────────────────────────────────
+console.log('[3] mergeStage1Job dedupes by session_id + source_watermark')
+{
+  const now = new Date('2026-08-27T00:00:00.000Z')
+  const state = { jobs: {} }
+  const a = mergeStage1Job(state, 's1', 'wm-v1', now)
+  check(a.queued === true, 'first enqueue for session+watermark is queued')
+  check(a.job.status === 'pending' && a.job.session_id === 's1' && a.job.source_watermark === 'wm-v1', 'job fields set')
+  const b = mergeStage1Job(state, 's1', 'wm-v1', now)
+  check(b.queued === false && b.job.id === a.job.id, 'duplicate session+watermark NOT re-queued (same job id)')
+  const c = mergeStage1Job(state, 's1', 'wm-v2', now)
+  check(c.queued === true && c.job.source_watermark === 'wm-v2', 'new watermark -> a separate job')
+  check(Object.keys(state.jobs).length === 2, 'two jobs (one per watermark)')
 }
 
 console.log(`\n${failed === 0 ? 'ALL STAGE1-STATE TESTS PASSED' : failed + ' TESTS FAILED'}`)
