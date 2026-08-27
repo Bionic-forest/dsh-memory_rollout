@@ -6,7 +6,7 @@ import os from 'node:os'
 import path from 'node:path'
 
 const PLUGIN = 'file:///D:/%E8%BD%AF%E4%BB%B6/Deepseek/plugins/dsh-rollout/lib/index.js'
-const { stage1BackoffSeconds, reclaimStage1Jobs, mergeStage1Job, stage1Recover, claimStage1Job } = await import(PLUGIN)
+const { stage1BackoffSeconds, reclaimStage1Jobs, mergeStage1Job, stage1Recover, claimStage1Job, enqueueStage1JobFile } = await import(PLUGIN)
 
 let failed = 0
 const check = (cond, msg) => {
@@ -99,6 +99,23 @@ console.log('[5] claimStage1Job claims an available pending job and leases it')
   check(picked.status === 'running' && picked.lease_owner === 'worker-1', 'claimed job -> running + owner')
   check(picked.lease_expires_at === new Date(now + 60000).toISOString(), 'lease set to now + leaseMs')
   check(claimStage1Job(state, now, 60000, 'worker-2') === null, 'no further available job (future one not due yet)')
+}
+
+// ── enqueueStage1JobFile: 事件只入队（落盘） ──────────────────────────────────
+console.log('[6] enqueueStage1JobFile persists enqueue (event-only, no model run)')
+{
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-stage1-'))
+  const p = path.join(dir, '.stage1-state.json')
+  const now = new Date('2026-08-27T00:00:00.000Z')
+  const a = enqueueStage1JobFile(p, 's1', 'wm-v1', now)
+  check(a.queued === true, 'first enqueue queued')
+  const disk1 = JSON.parse(fs.readFileSync(p, 'utf8'))
+  check(disk1.jobs && disk1.jobs['s1::wm-v1'] && disk1.jobs['s1::wm-v1'].status === 'pending', 'job persisted on disk as pending')
+  const b = enqueueStage1JobFile(p, 's1', 'wm-v1', now)
+  check(b.queued === false && b.job.id === a.job.id, 'duplicate session+watermark not re-queued on disk')
+  const c = enqueueStage1JobFile(p, 's2', 'wm-v1', now)
+  check(c.queued === true, 'different session -> new job')
+  fs.rmSync(dir, { recursive: true, force: true })
 }
 
 console.log(`\n${failed === 0 ? 'ALL STAGE1-STATE TESTS PASSED' : failed + ' TESTS FAILED'}`)
