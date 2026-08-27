@@ -6,7 +6,7 @@ import os from 'node:os'
 import path from 'node:path'
 
 const PLUGIN = 'file:///D:/%E8%BD%AF%E4%BB%B6/Deepseek/plugins/dsh-rollout/lib/index.js'
-const { stage1BackoffSeconds, reclaimStage1Jobs, mergeStage1Job, stage1Recover, claimStage1Job, enqueueStage1JobFile, stage1FinishJob } = await import(PLUGIN)
+const { stage1BackoffSeconds, reclaimStage1Jobs, mergeStage1Job, stage1Recover, claimStage1Job, enqueueStage1JobFile, stage1FinishJob, contentWatermark } = await import(PLUGIN)
 
 let failed = 0
 const check = (cond, msg) => {
@@ -138,6 +138,18 @@ console.log('[7] stage1FinishJob transitions job + writes output on success')
   const { job: j3 } = mergeStage1Job(state, 's3', 'wm-v1', now)
   stage1FinishJob(state, j3, 'failed_terminal', {}, now)
   check(j3.status === 'failed_terminal' && j3.completed_at === now.toISOString(), 'terminal -> completed, no retry')
+}
+
+// ── contentWatermark: 稳定来源水印（内容指纹） ───────────────────────────────
+console.log('[8] contentWatermark is a stable content fingerprint')
+{
+  const wm1 = contentWatermark('hello world messages')
+  const wm2 = contentWatermark('hello world messages')
+  const wm3 = contentWatermark('hello world messages edited')
+  const empty = contentWatermark('')
+  check(wm1 === wm2 && /^[0-9a-f]{16}$/.test(wm1), 'same content -> same 16-hex watermark')
+  check(wm1 !== wm3, 'changed content -> different watermark')
+  check(typeof empty === 'string' && empty.length === 16, 'empty input still yields a stable fingerprint')
 }
 
 console.log(`\n${failed === 0 ? 'ALL STAGE1-STATE TESTS PASSED' : failed + ' TESTS FAILED'}`)
