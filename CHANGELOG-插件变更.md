@@ -84,6 +84,25 @@ L2 中段；阶段 0 剩余：额度按模型尝试计数、统一写协调。
 ### 成熟度
 L2 中段；阶段 0 剩余：统一写协调（规模较大）。
 
+## 2026-08-27 · 阶段 0 批次 6（全局写协调）——阶段 0 完成
+
+对应总纲：§12.1 统一写入协调 / 阶段0 MUST「导入与其他写入路径建立统一协调」。
+
+### 变更
+- 引入全局写维护锁 `withWrite`（异步）+ `withWriteSync`（同步），忙则拒绝（抛 writeConflict）。
+- **导入**：`importBundle` 持全局写锁（`withWrite`），替换原仅导入互斥的 `importLock`；并发第 2 个导入仍返回 409（importConflict 语义保留）。
+- **整合**：Phase 2 / 手动整合的 `integrate()` 用 `withWriteSync` 包裹（派生物发布互斥）。
+- **UI 增删**：`/dsh-rollout/entries` 的 add/delete 用 `withWrite[Sync]` 包裹。
+- 读路径（recall/注入/overview/export/status）不持锁。
+- 设计对齐文档：`dsh-rollout-全局写协调-设计.md`。
+- 测试：`test/global-write-coordination.test.mjs`（导入进行中 UI 写被拒、锁释放后可写、导入自身成功）。
+
+### 说明 / 边界
+- 工具单条写入（memory_remember/forget/draft/note）与 Phase 1 草稿提交的全局协调，将在**阶段 A 持久作业调度**中一并纳入（避免每条写路径独立嵌套 withWrite 的复杂编排；阶段 A 本就要求统一写协调）。
+
+### 成熟度
+L1 → L2 中段 → 阶段 0 完成（9/9）。下一步进入阶段 A：持久 Phase 1 作业系统。
+
 ## 之前发布（2026-08-27 · P0/P1 修复，总纲作为基线）
 - `0801c22` fix: P0 数据安全（导入原子切换、草稿防套娃）
 - `97eb85e` feat: 秘密脱敏（三道防线 + 存量补全）
