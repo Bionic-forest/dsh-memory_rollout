@@ -116,6 +116,22 @@ L1 → L2 中段 → 阶段 0 完成（9/9）。下一步进入阶段 A：持久
 ### 说明
 - 阶段 A 核心「持久 `.stage1-state.json` 存储层 + `enqueueStage1Job` + `drainStage1Jobs` 领取/提炼/提交 + 事件回调只入队 + `.pipeline-state.json` 迁移 + 废弃内存 pendingPipeline」为后续实现块；本提交先落地状态机可单测部分。
 
+## 2026-08-28 · 阶段 A/B/C 完整落地 + 自检闭环（30 测试全绿）
+
+对照《向 Codex 原版系统看齐》总纲 + GPT/自检评估：
+
+### 阶段 A（持久 Phase 1 作业系统）完成
+事件只入队（disposer→`enqueueStage1JobFile`）→ 持久 `.stage1-state.json` → `drainStage1Jobs`（`withWrite` 领取、锁外提炼、提交、**每日模型尝试限额**、失败退避+`failed_terminal`）→ `stage1Recover`（**重启恢复接线：apply 启动时回收过期 running 并消费**）。验收：`pipeline-restart-style`/`startup-recover`/`drain-quota`/`drain-stage1`/`phase1-job-state`/`phase1-source-watermark`/`event-enqueue` 全过。
+
+### 阶段 B（真 Phase 2 全局整合）完成
+`phase2Integrate`：增量输入（`selected_for_phase2` 标记，消除重复/漏整合）→ 整合 LLM（`consolidate*`；**锁外调用、不长期持写锁**）→ 强校验（`validatePhase2Output`：`v1` 开头、合法安全引用路径、无秘密）→ **原子发布**（`atomicWritePair`）+ 成功水印；无变化不调模型；drain 产出后**自动触发**；`.phase2-authoritative` 标记使真 Phase 2 的 LLM 内容**不被确定性 integrate() 覆盖**。
+
+### 阶段 C（读取反馈与生命周期）完成
+entries 增 `last_used_at/usage_count/status`；`recall` 排序纳入相关性+新鲜度(`freshnessOf`/`freshnessWeight`)+使用反馈(`scoreMemory`)，并 `recordUsage` 更新使用反馈；`memory_forget` 只按精确 id 删除（禁 tag 批量误删）。
+
+### 自检闭环（对照总纲）
+自检/Qo 审查揪出的 H1/H2/H3a/H3b/M1-M6/L1/L7/L8 已全部修复（每项有失败路径测试）；`npm test` 30/30 全绿；三处副本 SHA256 一致。剩余**低**项（L2 引用证据强度/L3 unverified 标记/L4 输出元数据空/L5 退避自动触发/L6 陈旧注释）与阶段 D（发布候选）待后续。
+
 ## 之前发布（2026-08-27 · P0/P1 修复，总纲作为基线）
 - `0801c22` fix: P0 数据安全（导入原子切换、草稿防套娃）
 - `97eb85e` feat: 秘密脱敏（三道防线 + 存量补全）
