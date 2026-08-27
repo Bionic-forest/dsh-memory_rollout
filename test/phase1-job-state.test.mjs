@@ -140,6 +140,30 @@ console.log('[7] stage1FinishJob transitions job + writes output on success')
   check(j3.status === 'failed_terminal' && j3.completed_at === now.toISOString(), 'terminal -> completed, no retry')
 }
 
+// ── stage1FinishJob: failed_retryable 达 max_attempts 降级为 failed_terminal ──
+// H2：失败永不进 failed_terminal -> 无限重试。mergeStage1Job 产物 max_attempts=3，
+// 连续 failed_retryable 至 attempt_count 达到 3，最后一次必须降级为 failed_terminal
+// （completed_at，不再重试），而不是继续 retryable。
+console.log('[7b] failed_retryable promotes to failed_terminal at max_attempts')
+{
+  const now = new Date('2026-08-27T00:00:00.000Z')
+  const state = { jobs: {}, outputs: {} }
+  const { job } = mergeStage1Job(state, 's9', 'wm-v1', now)
+  check(job.max_attempts === 3 && job.attempt_count === 0, 'seeded job: max_attempts=3, attempt_count=0')
+
+  // 第 1、2 次失败：仍 retryable（1<3、2<3），attempt_count 递增 + 退避。
+  let r = stage1FinishJob(state, job, 'failed_retryable', { error_message: 'e1' }, now)
+  check(job.status === 'failed_retryable' && job.attempt_count === 1 && job.available_at, 'call 1 -> retryable, attempt 1, backoff set')
+  r = stage1FinishJob(state, job, 'failed_retryable', { error_message: 'e2' }, now)
+  check(job.status === 'failed_retryable' && job.attempt_count === 2, 'call 2 -> retryable, attempt 2')
+
+  // 第 3 次失败：attempt_count 达 max_attempts=3 -> 降级 failed_terminal，不再重试。
+  r = stage1FinishJob(state, job, 'failed_retryable', { error_message: 'e3' }, now)
+  check(job.status === 'failed_terminal' && job.attempt_count === 3, 'call 3 -> failed_terminal at max_attempts')
+  check(job.completed_at === now.toISOString(), 'terminal job has completed_at')
+  check(typeof job.available_at === 'string' && job.available_at.length > 0, 'available_at preserved (not cleared)')
+}
+
 // ── contentWatermark: 稳定来源水印（内容指纹） ───────────────────────────────
 console.log('[8] contentWatermark is a stable content fingerprint')
 {

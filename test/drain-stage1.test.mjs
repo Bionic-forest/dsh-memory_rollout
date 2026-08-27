@@ -59,4 +59,4 @@ try {
 }
 
 console.log(`\n${failed === 0 ? 'ALL DRAIN-STAGE1 TESTS PASSED' : failed + ' TESTS FAILED'}`)
-process.exit(failed === 0 ? 0 : 0)
+process.exit(failed === 0 ? 0 : 1)
