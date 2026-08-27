@@ -62,5 +62,9 @@
   "dependencies": {
     "@deepseek-ai/schemastery": "^3.18.1",
     "zod": "^4.4.3"
+  },
+  "scripts": {
+    "test": "pwsh -NoProfile -File test/run-tests.ps1",
+    "check": "node --check lib/index.js && node --check lib/client.js"
   }
 }
