@@ -20,10 +20,20 @@ const table = (() => {
   }
 })()
 let llmCalls = 0
+let extractionCalls = 0
+let consolidationCalls = 0
 const msgEvent = (id, text) => ({ type: 'user/message', seq: 0, time: 0, surfaceOp: 'append', data: { id, role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text }] } })
 const readSession = async (id) => ({ session: { version: 0, id, cwd: 'C:/' + id, createdAt: 0 }, events: [msgEvent(id, 'this is a long enough message for session ' + id + ' that definitely reaches the model extraction step now')] })
 const EXTRACTION = { rollout_summary: 'sum', raw_memory: 'raw', slug: 'note', keywords: '', title: '' }
-const llmMock = { stream: () => { llmCalls++; return { async *[Symbol.asyncIterator]() { yield { type: 'text-delta', text: JSON.stringify(EXTRACTION) }; yield { type: 'finish', reason: { kind: 'stop' } } } } } }
+const CONSOLIDATION = { memory_summary: 'v1\n## consolidated', registry: '# MEMORY.md\nok' }
+const llmMock = { stream: (opts) => {
+  llmCalls++
+  // 区分提炼(extraction)与整合(consolidation)：H3 自动触发会在产出后跑一次真 Phase 2
+  if (opts && String(opts.system).includes('memory-extraction')) extractionCalls++
+  else consolidationCalls++
+  const payload = (opts && String(opts.system).includes('memory-extraction')) ? EXTRACTION : CONSOLIDATION
+  return { async *[Symbol.asyncIterator]() { yield { type: 'text-delta', text: JSON.stringify(payload) }; yield { type: 'finish', reason: { kind: 'stop' } } } }
+} }
 const tools = {}
 const ctx = {
   storageDomain: { open: async () => ({ table: (name) => table, close: async () => {} }) },
@@ -56,7 +66,9 @@ try {
   const res = await tools['memory__stage1_drain'].execute({})
   const jobs = readJobs()
   check(res.processed === 1, 'only 1 job consumed because daily attempt cap = 1')
-  check(llmCalls === 1, 'only 1 LLM attempt made (cap enforced)')
+  check(extractionCalls === 1, 'only 1 extraction LLM attempt made (cap enforced)')
+  // H3: drain 产出后自动触发真 Phase 2 整合（一次额外 consolidation 调用）
+  check(consolidationCalls === 1, 'auto-triggered exactly 1 consolidation call after output')
   check(jobs['s1::w1'] && jobs['s1::w1'].status === 'succeeded_with_output', 's1 was distilled (consumed the single attempt)')
   check(jobs['s2::w2'] && jobs['s2::w2'].status === 'pending', 's2 stays pending — quota reached, not over-consumed')
 } finally {

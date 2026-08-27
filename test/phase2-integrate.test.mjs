@@ -90,7 +90,8 @@ try {
     const startupSummary = readSummary()
     writeState({
       jobs: {},
-      outputs: { 'j-1': { source_watermark: 'wm1', session_id: 's1', rollout_summary: 'x', generated_at: '2026-01-01T00:00:00.000Z' } },
+      // M1: 已消费的产物 selected_for_phase2: true → selectPhase2Inputs 挑不出增量 → no-change
+      outputs: { 'j-1': { source_watermark: 'wm1', session_id: 's1', rollout_summary: 'x', selected_for_phase2: true, generated_at: '2026-01-01T00:00:00.000Z' } },
       global: { lastSuccessWatermark: 'wm1', lastPhase2At: '' },
     })
     llmCalls = 0
@@ -138,6 +139,36 @@ try {
     const st = readState()
     check(st.global.lastSuccessWatermark === 'wm2', 'watermark NOT advanced on secret fail')
     check(llmCalls === 1, 'exactly 1 LLM call (attempt still counted)')
+  }
+
+  console.log('[4] 发布第二个文件失败：原子提交 → 旧版保留 + 水印未推进 + phase2_last_error（M2）')
+  {
+    const oldSummary = readSummary()
+    const oldRegistry = readRegistry()
+    writeState({
+      jobs: {},
+      outputs: { 'j-3': { source_watermark: 'wm4', session_id: 's3', rollout_summary: 'new2', generated_at: '2026-01-04T00:00:00.000Z' } },
+      global: { lastSuccessWatermark: 'wm3', lastPhase2At: '' },
+    })
+    llmResponse = { memory_summary: 'v1\n## atomic new', registry: '# MEMORY.md\natomic new' }
+    llmCalls = 0
+    // 注入：把 MEMORY.md.tmp 变成一个目录，使原子发布的第二个文件写出必然 EISDIR 失败。
+    const rTmpDir = registryFile() + '.tmp'
+    fs.mkdirSync(rTmpDir, { recursive: true })
+    let r
+    try {
+      r = await tools['memory__phase2_integrate'].execute({})
+    } finally {
+      try { fs.rmSync(rTmpDir, { recursive: true, force: true }) } catch {}
+    }
+    check(r && r.ran === true && r.ok === false, 'publish failure -> ok:false')
+    check(Array.isArray(r.errors) && r.errors.some((e) => /publish-failed/.test(e)), 'errors indicate publish-failed')
+    check(readSummary() === oldSummary, 'memory_summary.md kept old version (no partial publish)')
+    check(readRegistry() === oldRegistry, 'MEMORY.md kept old version (no partial publish)')
+    const st = readState()
+    check(st.global.lastSuccessWatermark === 'wm3', 'watermark NOT advanced on publish failure')
+    check(/publish-failed/.test(st.global.phase2_last_error || ''), 'phase2_last_error recorded on publish failure')
+    check(llmCalls === 1, 'exactly 1 LLM call (consolidation attempted)')
   }
 } finally {
   try { fs.rmSync(tmp, { recursive: true, force: true }) } catch {}

@@ -27,10 +27,19 @@ const table = (() => {
 })()
 const eventHandlers = {}
 let llmCalls = 0
+let extractionCalls = 0
+let consolidationCalls = 0
 const msgEvent = (id, text) => ({ type: 'user/message', seq: 0, time: 0, surfaceOp: 'append', data: { id, role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text }] } })
 const readSession = async (id) => ({ session: { version: 0, id, cwd: 'C:/' + id, createdAt: 0 }, events: [msgEvent(id, 'this is a long enough message for session ' + id + ' that triggers the model extraction')] })
 const EXTRACTION = { rollout_summary: 'sum', raw_memory: 'raw', slug: 'note', keywords: '', title: '' }
-const llmMock = { stream: () => { llmCalls++; return { async *[Symbol.asyncIterator]() { yield { type: 'text-delta', text: JSON.stringify(EXTRACTION) }; yield { type: 'finish', reason: { kind: 'stop' } } } } } }
+const CONSOLIDATION = { memory_summary: 'v1\n## consolidated', registry: '# MEMORY.md\nok' }
+const llmMock = { stream: (opts) => {
+  llmCalls++
+  if (opts && String(opts.system).includes('memory-extraction')) extractionCalls++
+  else consolidationCalls++
+  const payload = (opts && String(opts.system).includes('memory-extraction')) ? EXTRACTION : CONSOLIDATION
+  return { async *[Symbol.asyncIterator]() { yield { type: 'text-delta', text: JSON.stringify(payload) }; yield { type: 'finish', reason: { kind: 'stop' } } } }
+} }
 const ctx = {
   storageDomain: { open: async () => ({ table: (name) => table, close: async () => {} }) },
   get: (k) => (k === 'llm' ? llmMock : k === 'agentDefaultModel' ? { currentSelection: () => ({ provider: 'p', model: 'm' }) } : k === 'sessionQuery' ? { readSession } : undefined),
@@ -77,7 +86,9 @@ try {
   const hasSec1Job = Object.keys(jobs).some((k) => k.startsWith('sec1::'))
   console.log('  | llmCalls =', llmCalls, '| trig status =', trigJob && trigJob.status, '| hasSec1Job =', hasSec1Job)
 
-  check(llmCalls === 1, 'only 1 LLM attempt made (cap = 1 — trigger consumed the budget)')
+  check(extractionCalls === 1, 'only 1 extraction LLM attempt made (cap = 1 — trigger consumed the budget)')
+  // H3: drain 产出后自动触发一次真 Phase 2 整合（额外 consolidation 调用，不占提炼额度）
+  check(consolidationCalls === 1, 'auto-triggered exactly 1 consolidation call after output')
   check(trigDone && trigJob && trigJob.status === 'succeeded_with_output', 'trigger distilled (consumed the 1 attempt)')
   check(!hasSec1Job, 'sec1 NOT distilled — budget reached, nothing queued for it')
 } finally {
