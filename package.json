@@ -31,11 +31,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/<you>/dsh-rollout.git"
+    "url": "git+https://github.com/Bionic-forest/dsh-memory_rollout.git"
   },
-  "homepage": "https://github.com/<you>/dsh-rollout#readme",
+  "homepage": "https://github.com/Bionic-forest/dsh-memory_rollout#readme",
   "bugs": {
-    "url": "https://github.com/<you>/dsh-rollout/issues"
+    "url": "https://github.com/Bionic-forest/dsh-memory_rollout/issues"
   },
   "engines": {
     "node": ">=22"
