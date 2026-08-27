@@ -1,0 +1,34 @@
+# CHANGELOG — dsh-rollout 插件变更
+
+遵循《向 Codex 原版系统看齐》工程总纲 §19 工作纪律：每次变更记录对应需求、行为变化、测试与成熟度等级变化。成熟度等级（L0–L4）见总纲 §3。
+
+## 2026-08-27 · 阶段 0 第一批（L2 安全封口起步）
+
+对应总纲：§5.5 所有入口共享同一安全边界 / §11 三道防线 / §14.2 不变量「maxExtractPerTrigger=N 时实际尝试数绝不超过 N」。
+
+### 变更
+- **全写入入口统一脱敏**：UI「添加条目」与「导入条目」在写入 `entries` 表前经 `redactSecrets` 脱敏（此前这两条路径漏脱敏，仅自动路径与工具已脱敏）。对应 §11 三道防线、§5.5。
+- **`maxExtractPerTrigger` 边界修复**：触发会话计入上限，循环顶部先判断预算已满即结束；修掉旧实现「push 后再 break」导致 `maxExtractPerTrigger=1` 仍可能产生 2 个候选的超额问题。对应 §14.2。
+- **测试迁入仓库**：新增 `test/`，首批入库 `redaction-all-ingress.test.mjs`（UI+导入脱敏）、`phase1-maxextract-boundary.test.mjs`（预算不变量）。对应 §14。
+
+### 行为变化
+- UI/导入写入含秘密内容 → 落盘为 `[REDACTED]`，不再泄漏。
+- `maxExtractPerTrigger=1` 时实际提取数为 1（触发会话），不再额外抓取次级。
+
+### 自动化测试
+- `node test/redaction-all-ingress.test.mjs`
+- `node test/phase1-maxextract-boundary.test.mjs`
+- 另回归 `test-rollbackfailed / import-p0 / noop / redact / secondary / pipeline-p03 / import-mutex / pipeline-queue / stale / citation` 全部通过。
+
+### 成熟度
+L1 → L2 中段（安全封口补齐大部分）；阶段 0 剩余项（导入 integrate 回滚、统一写协调、严格导入校验、引用无占位、额度过尝试计数、全量测试入库）仍在进行。
+
+## 之前发布（2026-08-27 · P0/P1 修复，总纲作为基线）
+- `0801c22` fix: P0 数据安全（导入原子切换、草稿防套娃）
+- `97eb85e` feat: 秘密脱敏（三道防线 + 存量补全）
+- `701bbaf` fix: 失败/短会话不降级为脏记忆（含次级盲区）
+- `4fdf98e` fix: 回滚失败向客户端报告（rollbackFailed/backupPath）
+- `17f56e5` fix: 导入真单飞（UUID + 全局互斥）
+- `8ec989a` fix: 管线锁住时排队而非丢弃
+- `6f10316` fix: stale 按会话最近活动判定，不否决新活动
+- `09b5dbf` fix: 引用块 Codex 兼容（path:start-end）
