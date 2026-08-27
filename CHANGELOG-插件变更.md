@@ -23,6 +23,25 @@
 ### 成熟度
 L1 → L2 中段（安全封口补齐大部分）；阶段 0 剩余项（导入 integrate 回滚、统一写协调、严格导入校验、引用无占位、额度过尝试计数、全量测试入库）仍在进行。
 
+## 2026-08-27 · 阶段 0 批次 2（安全封口）
+
+对应总纲：§12.2 导入事务必含「切换成功但整合失败也属失败并回滚」/ §5.4、§9.3 引用不做占位。
+
+### 变更
+- **导入后 `integrate()` 纳入回滚**：把派生产物重建（integrate）移进切换事务的 try 块；若切换成功但整合失败，整个事务回滚到导入前状态并返回可重试错误（原实现 integrate 在 catch 外，整合失败不会回滚，会留下「新版已写但派生物未重建」的半状态）。对应 §12.2。
+- **引用不再返回占位来源**：无真实文件+行号证据时（不在 MEMORY.md 且无会话草稿），引用改为明确 `unverified:0-0|note=[no verifiable file+line source; not attested]`，不再伪造 `MEMORY.md:1-1`。对应 §5.4 / §9.3。
+- **测试入库**：新增 `test/import-integrate-rollback.test.mjs`（整合失败回滚）、`test/citation-unverified.test.mjs`（无占位引用）。
+
+### 行为变化
+- 导入时整合失败 → 整事务回滚、旧记忆保留、客户端收到「可重试」而非成功。
+- 无法证明来源的记忆引用不再伪装成真实行号。
+
+### 自动化测试
+`node test/import-integrate-rollback.test.mjs`、`node test/citation-unverified.test.mjs`；另全量回归（ingress-redaction / maxextract / 10 个旧项）全部通过。
+
+### 成熟度
+L2 中段；阶段 0 剩余项：严格导入校验（大小/路径/Base64）、额度按模型尝试计数、统一写协调、旧测试全量迁入。
+
 ## 之前发布（2026-08-27 · P0/P1 修复，总纲作为基线）
 - `0801c22` fix: P0 数据安全（导入原子切换、草稿防套娃）
 - `97eb85e` feat: 秘密脱敏（三道防线 + 存量补全）
