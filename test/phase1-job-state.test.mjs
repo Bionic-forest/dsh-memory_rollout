@@ -6,7 +6,7 @@ import os from 'node:os'
 import path from 'node:path'
 
 const PLUGIN = 'file:///D:/%E8%BD%AF%E4%BB%B6/Deepseek/plugins/dsh-rollout/lib/index.js'
-const { stage1BackoffSeconds, reclaimStage1Jobs, mergeStage1Job, stage1Recover, claimStage1Job, enqueueStage1JobFile } = await import(PLUGIN)
+const { stage1BackoffSeconds, reclaimStage1Jobs, mergeStage1Job, stage1Recover, claimStage1Job, enqueueStage1JobFile, stage1FinishJob } = await import(PLUGIN)
 
 let failed = 0
 const check = (cond, msg) => {
@@ -116,6 +116,28 @@ console.log('[6] enqueueStage1JobFile persists enqueue (event-only, no model run
   const c = enqueueStage1JobFile(p, 's2', 'wm-v1', now)
   check(c.queued === true, 'different session -> new job')
   fs.rmSync(dir, { recursive: true, force: true })
+}
+
+// ── stage1FinishJob: drain 提交一步（success/retry/terminal） ────────────────
+console.log('[7] stage1FinishJob transitions job + writes output on success')
+{
+  const now = new Date('2026-08-27T00:00:00.000Z')
+  const state = { jobs: {}, outputs: {} }
+  const { job } = mergeStage1Job(state, 's1', 'wm-v1', now)
+  // success with output
+  stage1FinishJob(state, job, 'succeeded_with_output', { output: { rollout_summary: 'sum', raw_memory: 'raw', slug: 'note' } }, now)
+  check(job.status === 'succeeded_with_output' && job.completed_at === now.toISOString(), 'success -> completed')
+  check(state.outputs[job.id] && state.outputs[job.id].rollout_summary === 'sum', 'output stored in outputs table')
+  // failed_retryable -> attempt + available_at
+  const { job: j2 } = mergeStage1Job(state, 's2', 'wm-v1', now)
+  stage1FinishJob(state, j2, 'failed_retryable', { error_message: 'boom' }, now)
+  check(j2.status === 'failed_retryable' && j2.attempt_count === 1, 'retryable -> attempt_count +1')
+  check(j2.available_at === new Date(now.getTime() + 60 * 1000).toISOString(), 'available_at set to now + 60s backoff')
+  check(j2.last_error_message === 'boom', 'error message recorded')
+  // failed_terminal -> completed (no retry)
+  const { job: j3 } = mergeStage1Job(state, 's3', 'wm-v1', now)
+  stage1FinishJob(state, j3, 'failed_terminal', {}, now)
+  check(j3.status === 'failed_terminal' && j3.completed_at === now.toISOString(), 'terminal -> completed, no retry')
 }
 
 console.log(`\n${failed === 0 ? 'ALL STAGE1-STATE TESTS PASSED' : failed + ' TESTS FAILED'}`)
