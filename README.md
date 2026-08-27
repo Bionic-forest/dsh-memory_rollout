@@ -1,5 +1,13 @@
 # dsh-rollout
 
+> **Project status: experimental / not yet public.** This is a **vibe-coding**
+> project — it was built rapidly by an AI agent with its human collaborator,
+> iterating on ideas as they came. It works well enough for the author's own
+> use, but it has NOT been battle-tested, may have rough edges, and its API and
+> behavior can change without notice. Issues, gaps, and bugs are fair game and
+> expected at this stage. It is published to learn and to gather feedback, not
+> presented as a finished, production-ready plugin.
+
 Codex-style per-session memory for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (DSH).
 
 Inspired by the [Codex memory model](https://github.com/openai/codex) — layered, restrained, and passive. `dsh-rollout` gives each session a draft paper and the agent a persistent, well-organized memory that is written only when it makes sense.

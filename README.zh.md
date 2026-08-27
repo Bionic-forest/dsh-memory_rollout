@@ -1,5 +1,7 @@
 # dsh-rollout
 
+> **项目状态：实验性 / 尚未公开。** 这是一个 **vibe coding**（直觉驱动 / AI 辅助快速开发）项目——由 AI agent 与人类协作者快速迭代而成。它足以支撑作者自用，但**未经充分测试，可能有粗糙边缘，API 与行为随时可能变动**。此阶段的缺陷、遗漏、bug 属正常预期。发布是为了学习与收集反馈，**不是**作为生产就绪的成熟插件。
+
 为 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（DSH）打造的 **Codex 式会话记忆**插件（一会话一草稿）。
 
 灵感来自 [Codex 记忆模型](https://github.com/openai/codex)——分层、克制、被动。`dsh-rollout` 给每个会话一张草稿纸，给 Agent 一份有组织、只在必要时才写入的持久记忆。
