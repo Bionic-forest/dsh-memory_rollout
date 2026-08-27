@@ -1,9 +1,12 @@
 // 阶段 A：stage-1 作业状态机核心（租约回收 + 退避）— 可单测纯函数
 // 对应《向Codex原版系统看齐》§15 阶段 A（领取/租约/过期恢复、失败退避）。
 import assert from 'node:assert'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 
 const PLUGIN = 'file:///D:/%E8%BD%AF%E4%BB%B6/Deepseek/plugins/dsh-rollout/lib/index.js'
-const { stage1BackoffSeconds, reclaimStage1Jobs, mergeStage1Job } = await import(PLUGIN)
+const { stage1BackoffSeconds, reclaimStage1Jobs, mergeStage1Job, stage1Recover } = await import(PLUGIN)
 
 let failed = 0
 const check = (cond, msg) => {
@@ -60,6 +63,28 @@ console.log('[3] mergeStage1Job dedupes by session_id + source_watermark')
   const c = mergeStage1Job(state, 's1', 'wm-v2', now)
   check(c.queued === true && c.job.source_watermark === 'wm-v2', 'new watermark -> a separate job')
   check(Object.keys(state.jobs).length === 2, 'two jobs (one per watermark)')
+}
+
+// ── stage1Recover: 重启恢复（读盘→回收→写回） ────────────────────────────────
+console.log('[4] stage1Recover persists lease reclaim across a restart')
+{
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-stage1-'))
+  const p = path.join(dir, '.stage1-state.json')
+  const now = Date.now()
+  fs.writeFileSync(p, JSON.stringify({
+    jobs: {
+      expired: { status: 'running', lease_expires_at: new Date(now - 1000).toISOString(), lease_owner: 'w1' },
+      live: { status: 'running', lease_expires_at: new Date(now + 60000).toISOString(), lease_owner: 'w2' },
+      done: { status: 'succeeded_with_output' },
+    },
+  }), 'utf8')
+  const n = stage1Recover(p, now)
+  const reloaded = JSON.parse(fs.readFileSync(p, 'utf8'))
+  check(n === 1, 'recover reclaims the expired running job')
+  check(reloaded.jobs.expired.status === 'pending', 'expired running -> pending on disk')
+  check(reloaded.jobs.live.status === 'running', 'live job stays running on disk')
+  check(reloaded.jobs.done.status === 'succeeded_with_output', 'completed job untouched')
+  fs.rmSync(dir, { recursive: true, force: true })
 }
 
 console.log(`\n${failed === 0 ? 'ALL STAGE1-STATE TESTS PASSED' : failed + ' TESTS FAILED'}`)
