@@ -1,0 +1,17 @@
+# dsh-rollout .gitignore
+
+# Backup / debug artifacts never shipped
+*.bak
+*.bak-*
+*.map
+~$*
+
+# Editor
+.DS_Store
+*.swp
+.vscode/
+.idea/
+
+# Build artifacts (if a build step is ever added)
+dist/
+*.tgz
