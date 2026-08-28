@@ -13,9 +13,10 @@ import assert from 'node:assert'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { makeCtx, jobListOf, outputListOf, seedJob } from './lib/helpers.mjs'
 
 const PLUGIN = 'file:///D:/%E8%BD%AF%E4%BB%B6/Deepseek/plugins/dsh-rollout/lib/index.js'
-const { apply, enqueueStage1JobFile } = await import(PLUGIN)
+const { apply } = await import(PLUGIN)
 
 let failed = 0
 const check = (cond, msg) => {
@@ -70,16 +71,6 @@ async function runSecondary({ secMessage, llmMode /* 'none' | 'ok' | 'empty' */ 
   const tmp = path.join(os.tmpdir(), 'dsh-rollout-sec-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6))
   fs.mkdirSync(tmp, { recursive: true })
   process.env.DSH_HOME = tmp
-  const table = (() => {
-    const m = new Map()
-    return {
-      put: (k, v) => { m.set(k, v); return Promise.resolve() },
-      delete: (k) => Promise.resolve(m.delete(k)),
-      keys: () => m.keys(),
-      entries: () => m.entries(),
-      get size() { return m.size },
-    }
-  })()
   const eventHandlers = {}
   const queryMock = {
     readSession: async (id) => {
@@ -87,19 +78,15 @@ async function runSecondary({ secMessage, llmMode /* 'none' | 'ok' | 'empty' */ 
       return { session: headerOf(id, 'C:/' + id), events: [] } // trigger → empty
     },
   }
-  const ctx = {
-    storageDomain: { open: async () => ({ table: (name) => table, close: async () => {} }) },
+  const { ctx, domain } = makeCtx({
     get: (k) => {
       if (k === 'sessionQuery') return queryMock
       if (k === 'llm') return llmMode === 'none' ? undefined : makeLlm(llmMode)
       if (k === 'agentDefaultModel') return llmMode === 'none' ? undefined : { currentSelection: () => ({ provider: 'mock', model: 'mock-1' }) }
       return undefined
     },
-    tools: { register: () => {} },
-    systemPrompt: { section: () => {} },
-    effect: (fn) => fn(),
     on: (ev, cb) => { eventHandlers[ev] = cb; return () => {} },
-  }
+  })
   const config = {
     autoTrigger: 'sessionEnd',
     minIdleHours: 1,
@@ -113,26 +100,22 @@ async function runSecondary({ secMessage, llmMode /* 'none' | 'ok' | 'empty' */ 
   }
   await apply(ctx, config)
 
-  const stage1File = path.join(tmp, 'memories', '.stage1-state.json')
-  const readStage1 = () => { try { return JSON.parse(fs.readFileSync(stage1File, 'utf8')) } catch { return { jobs: {}, outputs: {} } } }
-
   // 接线③：次级候选不再是 pipelinePhase1 的选择结果 —— 这里手动 enqueue 一条 'sec' 作业，
   // 模拟「次级候选入队」，由 disposer 排定的同一轮 drain 消费。先 enqueue，再 fire trigger，
   // 确保 drain 开始时两条作业（trigger + sec）都已就绪。
-  enqueueStage1JobFile(stage1File, 'sec', 'sec-wm', new Date())
+  await seedJob(domain, 'sec', 'sec-wm')
 
   assert.ok(eventHandlers['session/disposed'], 'session/disposed handler registered')
   eventHandlers['session/disposed']({ id: 'trig', header: { cwd: 'C:/trig' } })
   const done = await waitUntil(() => {
-    const st = readStage1().jobs || {}
-    const trig = Object.values(st).find((x) => String(x.session_id) === 'trig')
-    const sec = Object.values(st).find((x) => String(x.session_id) === 'sec')
+    const jl = jobListOf(domain)
+    const trig = Object.values(jl).find((x) => String(x.session_id) === 'trig')
+    const sec = Object.values(jl).find((x) => String(x.session_id) === 'sec')
     return sec && sec.status !== 'pending' && trig && trig.status !== 'pending'
   }, 3000)
 
-  const st = readStage1()
-  const jobs = st.jobs || {}
-  const outputs = st.outputs || {}
+  const jobs = jobListOf(domain)
+  const outputs = outputListOf(domain)
   const secJob = Object.values(jobs).find((x) => String(x.session_id) === 'sec')
   const trigJob = Object.values(jobs).find((x) => String(x.session_id) === 'trig')
   const secOutput = secJob ? outputs[secJob.id] : undefined

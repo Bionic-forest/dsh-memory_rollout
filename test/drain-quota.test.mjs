@@ -1,24 +1,16 @@
 // 阶段 A：drain 每日模型尝试上限（GPT §14.2：实际尝试数 ≤ N）
 // 与 old pipelinePhase1 的单会话额度不同，这里验证 drain 消费时就地限额：
 // cap=1 且有两个可提炼(≥60字符)的 job 时，drain 只消化 1 个（第 2 个仍 pending）。
+// 存储访问：读 dsh_rollout 的 stage1_jobs 表（jobListOf），预置用 seedJob。
 import assert from 'node:assert'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { makeCtx, jobListOf, seedJob } from './lib/helpers.mjs'
 
 const PLUGIN = 'file:///D:/%E8%BD%AF%E4%BB%B6/Deepseek/plugins/dsh-rollout/lib/index.js'
-const { apply, enqueueStage1JobFile } = await import(PLUGIN)
+const { apply } = await import(PLUGIN)
 
-const table = (() => {
-  const m = new Map()
-  return {
-    put: (k, v) => { m.set(k, v); return Promise.resolve() },
-    delete: (k) => Promise.resolve(m.delete(k)),
-    keys: () => m.keys(),
-    entries: () => m.entries(),
-    get size() { return m.size },
-  }
-})()
 let llmCalls = 0
 let extractionCalls = 0
 let consolidationCalls = 0
@@ -34,21 +26,14 @@ const llmMock = { stream: (opts) => {
   const payload = (opts && String(opts.system).includes('memory-extraction')) ? EXTRACTION : CONSOLIDATION
   return { async *[Symbol.asyncIterator]() { yield { type: 'text-delta', text: JSON.stringify(payload) }; yield { type: 'finish', reason: { kind: 'stop' } } } }
 } }
-const tools = {}
-const ctx = {
-  storageDomain: { open: async () => ({ table: (name) => table, close: async () => {} }) },
+const { ctx, domain } = makeCtx({
   get: (k) => (k === 'llm' ? llmMock : k === 'agentDefaultModel' ? { currentSelection: () => ({ provider: 'p', model: 'm' }) } : k === 'sessionQuery' ? { readSession } : undefined),
-  tools: { register: (t) => { tools[t.name] = t } },
-  systemPrompt: { section: () => {} },
-  effect: (fn) => fn(),
-  on: () => () => {},
-}
+})
 
 const tmp = path.join(os.tmpdir(), 'dsh-rollout-quota-' + Date.now())
 process.env.DSH_HOME = tmp
 fs.mkdirSync(tmp, { recursive: true })
-const stateFile = () => path.join(tmp, 'memories', '.stage1-state.json')
-const readJobs = () => { try { return JSON.parse(fs.readFileSync(stateFile(), 'utf8')).jobs || {} } catch { return {} } }
+const readJobs = (d) => jobListOf(d)
 
 let failed = 0
 const check = (cond, msg) => {
@@ -58,13 +43,13 @@ const check = (cond, msg) => {
 
 try {
   await apply(ctx, { maxModelAttemptsPerDay: 1 })
-  assert.ok(tools['memory__stage1_drain'], 'drain tool registered')
+  assert.ok(ctx.tools['memory__stage1_drain'], 'drain tool registered')
 
-  enqueueStage1JobFile(stateFile(), 's1', 'w1', new Date())
-  enqueueStage1JobFile(stateFile(), 's2', 'w2', new Date())
+  await seedJob(domain, 's1', 'w1')
+  await seedJob(domain, 's2', 'w2')
 
-  const res = await tools['memory__stage1_drain'].execute({})
-  const jobs = readJobs()
+  const res = await ctx.tools['memory__stage1_drain'].execute({})
+  const jobs = readJobs(domain)
   check(res.processed === 1, 'only 1 job consumed because daily attempt cap = 1')
   check(extractionCalls === 1, 'only 1 extraction LLM attempt made (cap enforced)')
   // H3: drain 产出后自动触发真 Phase 2 整合（一次额外 consolidation 调用）

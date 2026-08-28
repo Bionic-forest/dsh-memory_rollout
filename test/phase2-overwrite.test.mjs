@@ -7,25 +7,17 @@
 //         对照：phase2 之前，integrate() 照常确定性重建（证明确定性路径未被破坏）。
 //  M4 —— phase2Integrate 的 LLM 调用发生在写锁外：模型执行期间全局写锁不被占，
 //         一个并发写（memory_forget）能成功而不抛「另一个写进行中」冲突。
+// 迁移：.stage1-state.json 的 outputs/global 改由 stage1_outputs / stage1_meta 表预置
+// （seedOutput + setMeta）；entries 表写入改 domain.table('entries')；断言的 global
+// 字段改用 metaOf(domain)。
 import assert from 'node:assert'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { makeCtx, seedOutput, setMeta } from './lib/helpers.mjs'
 
 const PLUGIN = 'file:///D:/%E8%BD%AF%E4%BB%B6/Deepseek/plugins/dsh-rollout/lib/index.js'
 const { apply } = await import(PLUGIN)
-
-const table = (() => {
-  const m = new Map()
-  return {
-    put: (k, v) => { m.set(k, v); return Promise.resolve() },
-    delete: (k) => Promise.resolve(m.delete(k)),
-    keys: () => m.keys(),
-    entries: () => m.entries(),
-    get size() { return m.size },
-    _m: m,
-  }
-})()
 
 // Controlled LLM mock. `pauseConsolidation` lets Scenario [4] hold the model call
 // open so we can probe the write lock during the consolidation; the default is
@@ -52,8 +44,7 @@ const llmMock = {
 }
 
 const tools = {}
-const ctx = {
-  storageDomain: { open: async () => ({ table: (name) => table, close: async () => {} }) },
+const { ctx, domain } = makeCtx({
   get: (k) =>
     k === 'llm'
       ? llmMock
@@ -61,25 +52,21 @@ const ctx = {
         ? { currentSelection: () => ({ provider: 'p', model: 'm' }) }
         : undefined,
   tools: { register: (t) => { tools[t.name] = t } },
-  systemPrompt: { section: () => {} },
-  effect: (fn) => fn(),
-  on: () => () => {},
-}
+})
 
 const tmp = path.join(os.tmpdir(), 'dsh-rollout-ph2ow-' + Date.now())
 process.env.DSH_HOME = tmp
 fs.mkdirSync(tmp, { recursive: true })
 const root = () => path.join(tmp, 'memories')
-const stateFile = () => path.join(root(), '.stage1-state.json')
 const summaryFile = () => path.join(root(), 'memory_summary.md')
 const registryFile = () => path.join(root(), 'MEMORY.md')
 const authorityFile = () => path.join(root(), '.phase2-authoritative')
 const readSummary = () => { try { return fs.readFileSync(summaryFile(), 'utf8') } catch { return '' } }
 const readRegistry = () => { try { return fs.readFileSync(registryFile(), 'utf8') } catch { return '' } }
-const readState = () => { try { return JSON.parse(fs.readFileSync(stateFile(), 'utf8')) } catch { return {} } }
-const writeState = (s) => {
-  fs.mkdirSync(path.dirname(stateFile()), { recursive: true })
-  fs.writeFileSync(stateFile(), JSON.stringify(s, null, 2))
+// 用表预置：outputs → stage1_outputs 表；global → stage1_meta 表。
+const seedState = async (outputs, global) => {
+  for (const [jobId, o] of Object.entries(outputs || {})) await seedOutput(domain, jobId, o)
+  await setMeta(domain, global || {})
 }
 const writeDraft = (name) => {
   const d = path.join(root(), 'rollout_summaries')
@@ -110,7 +97,7 @@ try {
   console.log('[0] 对照：phase2 之前，integrate() 照常确定性重建（草稿/entries 变化 → changed:true）')
   {
     writeDraft('a.md')
-    table.put('e1', { content: 'a durable preference', tags: ['pref'], createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z', sessionId: 's1' })
+    await domain.table('entries').put('e1', { content: 'a durable preference', tags: ['pref'], createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z', sessionId: 's1' })
     const r = await tools['memory_integrate'].execute({})
     check(r.changed === true && r.skipped === false, 'before phase2, integrate() regenerates (changed:true)')
     check(readSummary().includes('a durable preference'), 'deterministic summary reflects the entry')
@@ -120,11 +107,10 @@ try {
   console.log('[1] H3b(A)：phase2 发布 → 草稿/entries 未变 → integrate() skip，LLM 内容保留')
   {
     const prePhase2Summary = readSummary() // 场景 [0] 的确定性内容（作为旧版对照）
-    writeState({
-      jobs: {},
-      outputs: { 'j-p2': { source_watermark: 'wm-p2', session_id: 's-a', rollout_summary: 'new incremental', generated_at: '2026-01-02T00:00:00.000Z' } },
-      global: { lastSuccessWatermark: '', lastPhase2At: '' },
-    })
+    await seedState(
+      { 'j-p2': { source_watermark: 'wm-p2', session_id: 's-a', rollout_summary: 'new incremental', generated_at: '2026-01-02T00:00:00.000Z' } },
+      { lastSuccessWatermark: '', lastPhase2At: '' },
+    )
     const p2 = await tools['memory__phase2_integrate'].execute({})
     check(p2.ran === true && p2.ok === true, 'phase2 publish succeeds (ran:true ok:true)')
     check(readSummary() === 'v1\n## LLM SUMMARY', 'memory_summary.md now holds LLM content')
@@ -153,12 +139,11 @@ try {
   {
     // 再预置一个未被消费的增量，让 phase2 有输入；打开“暂停模型”开关。
     pauseConsolidation = true
-    writeState({
-      jobs: {},
-      outputs: { 'j-m4': { source_watermark: 'wm-m4', session_id: 's-m4', rollout_summary: 'm4 incremental', generated_at: '2026-01-03T00:00:00.000Z' } },
-      global: { lastSuccessWatermark: '', lastPhase2At: '' },
-    })
-    table.put('m4-id', { content: 'entry to forget', tags: ['x'], createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z', sessionId: 's-m4' })
+    await seedState(
+      { 'j-m4': { source_watermark: 'wm-m4', session_id: 's-m4', rollout_summary: 'm4 incremental', generated_at: '2026-01-03T00:00:00.000Z' } },
+      { lastSuccessWatermark: '', lastPhase2At: '' },
+    )
+    await domain.table('entries').put('m4-id', { content: 'entry to forget', tags: ['x'], createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z', sessionId: 's-m4' })
     consolidationCalls = 0
     const p = tools['memory__phase2_integrate'].execute({})
     const entered = await waitUntil(() => consolidationInFlight, 2000)

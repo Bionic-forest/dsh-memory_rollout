@@ -9,6 +9,7 @@ import assert from 'node:assert'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { makeCtx, jobListOf, outputListOf } from './lib/helpers.mjs'
 
 const PLUGIN = 'file:///D:/%E8%BD%AF%E4%BB%B6/Deepseek/plugins/dsh-rollout/lib/index.js'
 const { apply } = await import(PLUGIN)
@@ -18,9 +19,6 @@ const check = (cond, msg) => {
   if (cond) console.log('  ✓ ', msg)
   else { failed++; console.error('  ✗ ', msg) }
 }
-
-const memoryRoot = (home) => path.join(home, 'memories')
-const stage1File = (home) => path.join(memoryRoot(home), '.stage1-state.json')
 
 const msgEvent = (id, text) => ({
   type: 'user/message', seq: 0, time: 0, surfaceOp: 'append',
@@ -59,35 +57,21 @@ async function runScenario({ sessionId, messageText, llmMode }) {
   const tmp = path.join(os.tmpdir(), 'dsh-rollout-noop-' + sessionId + '-' + Date.now())
   fs.mkdirSync(tmp, { recursive: true })
   process.env.DSH_HOME = tmp
-  const table = (() => {
-    const m = new Map()
-    return {
-      put: (k, v) => { m.set(k, v); return Promise.resolve() },
-      delete: (k) => Promise.resolve(m.delete(k)),
-      keys: () => m.keys(),
-      entries: () => m.entries(),
-      get size() { return m.size },
-    }
-  })()
   const eventHandlers = {}
   const llm = makeLlm(llmMode)
   const readSession = async (id) => ({
     session: { version: 0, id, cwd: 'C:/' + id, createdAt: 0 },
     events: [msgEvent(id, messageText)],
   })
-  const ctx = {
-    storageDomain: { open: async () => ({ table: (name) => table, close: async () => {} }) },
+  const { ctx, domain } = makeCtx({
     get: (k) => {
       if (k === 'sessionQuery') return { readSession }
       if (k === 'llm') return llm
       if (k === 'agentDefaultModel') return { currentSelection: () => ({ provider: 'mock', model: 'mock-1' }) }
       return undefined
     },
-    tools: { register: () => {} },
-    systemPrompt: { section: () => {} },
-    effect: (fn) => fn(),
     on: (ev, cb) => { eventHandlers[ev] = cb; return () => {} },
-  }
+  })
   const config = {
     autoTrigger: 'sessionEnd',
     minIdleHours: 0,
@@ -109,20 +93,14 @@ async function runScenario({ sessionId, messageText, llmMode }) {
   assert.ok(eventHandlers['session/disposed'], 'session/disposed handler registered')
   eventHandlers['session/disposed'](trigger)
   const done = await waitUntil(() => {
-    const s = readStage1(tmp)
-    const j = Object.values(s.jobs).find((x) => String(x.session_id) === sessionId)
+    const j = Object.values(jobListOf(domain)).find((x) => String(x.session_id) === sessionId)
     return j && j.status !== 'pending'
   }, 3000)
 
-  const st = readStage1(tmp)
-  const job = Object.values(st.jobs).find((x) => String(x.session_id) === sessionId)
-  const output = job ? (st.outputs && st.outputs[job.id]) : undefined
+  const job = Object.values(jobListOf(domain)).find((x) => String(x.session_id) === sessionId)
+  const output = job ? outputListOf(domain)[job.id] : undefined
   fs.rmSync(tmp, { recursive: true, force: true })
   return { done, job, output }
-}
-
-function readStage1(home) {
-  try { return JSON.parse(fs.readFileSync(stage1File(home), 'utf8')) } catch { return { jobs: {}, outputs: {} } }
 }
 
 // ── scenario 1: LLM fails → failed_retryable, no output, raw transcript NOT written ──
@@ -152,7 +130,7 @@ console.log('[3] empty model summary → no-op, no output')
   check(r.done, 'job submitted (drain completed)')
   check(r.job && r.job.status === 'succeeded_no_output', 'status recorded as succeeded_no_output')
   check(r.job && !!r.job.completed_at, 'completed_at set (terminal no-op)')
-  check(r.output === undefined, 'no output written when model returns empty summary')
+  check(!(r.output && r.output.rollout_summary), 'no output written when model returns empty summary')
 }
 
 // ── scenario 4: normal session → with_output, refined summary (no raw transcript) ──

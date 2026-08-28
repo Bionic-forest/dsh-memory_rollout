@@ -9,6 +9,7 @@ import path from 'node:path'
 
 const PLUGIN = 'file:///D:/%E8%BD%AF%E4%BB%B6/Deepseek/plugins/dsh-rollout/lib/index.js'
 const { apply, redactSecrets } = await import(PLUGIN)
+import { createFakeDomain, jobListOf, outputListOf } from './lib/helpers.mjs'
 
 let failed = 0
 const check = (cond, msg) => {
@@ -48,29 +49,16 @@ check(redactSecrets('[REDACTED] sk-abcdef') === '[REDACTED] [REDACTED]', 'idempo
 
 // ── shared mock host for the plugin ─────────────────────────────────────────
 function makeCtx(tools, eventHandlers, queryMock) {
-  const table = (() => {
-    const m = new Map()
-    return {
-      put: (k, v) => { m.set(k, v); return Promise.resolve() },
-      delete: (k) => Promise.resolve(m.delete(k)),
-      keys: () => m.keys(),
-      entries: () => m.entries(),
-      get size() { return m.size },
-      _m: m,
-    }
-  })()
+  const domain = createFakeDomain()
   const ctx = {
-    storageDomain: { open: async () => ({ table: (name) => table, close: async () => {} }) },
-    get: (k) => {
-      if (k === 'sessionQuery') return queryMock
-      return undefined
-    },
+    storageDomain: { open: async () => domain },
+    get: (k) => (k === 'sessionQuery' ? queryMock : undefined),
     tools: { register: (tool) => { tools[tool.name] = tool } },
     systemPrompt: { section: () => {} },
     effect: (fn) => fn(),
     on: (ev, cb) => { eventHandlers[ev] = cb; return () => {} },
   }
-  return { ctx, table }
+  return { ctx, domain }
 }
 
 // ── (B) memory_remember redacts on the entries write ────────────────────────
@@ -82,7 +70,7 @@ console.log('\n[B] memory_remember redacts before writing the entry')
   process.env.DSH_HOME = tmp
   fs.mkdirSync(tmp, { recursive: true })
   try {
-    const { ctx, table } = makeCtx(tools, eventHandlers, undefined)
+    const { ctx, domain } = makeCtx(tools, eventHandlers, undefined)
     await apply(ctx, {})
     const remember = tools['memory_remember']
     assert.ok(remember && typeof remember.execute === 'function', 'memory_remember tool captured')
@@ -91,7 +79,7 @@ console.log('\n[B] memory_remember redacts before writing the entry')
       { content: secret, tags: ['secret', 'project'] },
       { agent: { session: { id: 's1' } } },
     )
-    const stored = table._m.get(res.id)
+    const stored = domain.table('entries').get(res.id)
     check(stored.content.indexOf('sk-abcDEF123456') === -1, 'remembered content has no raw secret')
     check(stored.content.includes('[REDACTED]'), 'remembered content contains [REDACTED]')
     check(stored.content === 'credential [REDACTED] and Password=[REDACTED]', 'remembered full content redacted')
@@ -110,7 +98,7 @@ console.log('\n[C] pipeline extract output redacts secrets (D1 transcript + D3 w
   process.env.DSH_HOME = tmp
   fs.mkdirSync(tmp, { recursive: true })
   try {
-    const { ctx } = makeCtx(tools, eventHandlers, undefined)
+    const { ctx, domain } = makeCtx(tools, eventHandlers, undefined)
     let llmInput = ''
     const msgEvent = {
       type: 'user/message', seq: 0, time: 0, surfaceOp: 'append',
@@ -153,8 +141,7 @@ console.log('\n[C] pipeline extract output redacts secrets (D1 transcript + D3 w
     }
     await apply(ctx, config)
 
-    const stage1File = path.join(tmp, 'memories', '.stage1-state.json')
-    const readStage1 = () => { try { return JSON.parse(fs.readFileSync(stage1File, 'utf8')) } catch { return { jobs: {}, outputs: {} } } }
+    const readStage1 = () => ({ jobs: jobListOf(domain), outputs: outputListOf(domain) })
     const waitUntil = async (fn, ms) => {
       const t0 = Date.now()
       while (Date.now() - t0 < ms) {

@@ -3,25 +3,15 @@
 // （selected_for_phase2: false）→ 自动跑 memory__phase2_integrate（consolidation LLM）：
 // 发布 memory_summary.md（LLM 内容）、推进 lastSuccessWatermark、设置 lastPhase2At、
 // 并把已消费产物置 selected_for_phase2: true。
+// 存储访问：读 dsh_rollout 的 stage1_outputs / stage1_meta 表（outputListOf / metaOf），预置用 seedJob。
 import assert from 'node:assert'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { makeCtx, outputListOf, metaOf, seedJob } from './lib/helpers.mjs'
 
 const PLUGIN = 'file:///D:/%E8%BD%AF%E4%BB%B6/Deepseek/plugins/dsh-rollout/lib/index.js'
-const { apply, enqueueStage1JobFile } = await import(PLUGIN)
-
-const table = (() => {
-  const m = new Map()
-  return {
-    put: (k, v) => { m.set(k, v); return Promise.resolve() },
-    delete: (k) => Promise.resolve(m.delete(k)),
-    keys: () => m.keys(),
-    entries: () => m.entries(),
-    get size() { return m.size },
-  }
-})()
-const tools = {}
+const { apply } = await import(PLUGIN)
 
 let extractionCalls = 0
 let consolidationCalls = 0
@@ -44,29 +34,22 @@ const llmMock = {
     }
   },
 }
-const ctx = {
-  storageDomain: { open: async () => ({ table: (name) => table, close: async () => {} }) },
+const { ctx, domain } = makeCtx({
   get: (k) =>
     k === 'llm' ? llmMock
       : k === 'agentDefaultModel' ? { currentSelection: () => ({ provider: 'p', model: 'm' }) }
         : k === 'sessionQuery' ? { readSession } : undefined,
-  tools: { register: (t) => { tools[t.name] = t } },
-  systemPrompt: { section: () => {} },
-  effect: (fn) => fn(),
-  on: () => () => {},
-}
+})
 
 const tmp = path.join(os.tmpdir(), 'dsh-rollout-ph2auto-' + Date.now())
 process.env.DSH_HOME = tmp
 fs.mkdirSync(tmp, { recursive: true })
 const root = () => path.join(tmp, 'memories')
-const stateFile = () => path.join(root(), '.stage1-state.json')
 const summaryFile = () => path.join(root(), 'memory_summary.md')
 const registryFile = () => path.join(root(), 'MEMORY.md')
 const readSummary = () => { try { return fs.readFileSync(summaryFile(), 'utf8') } catch { return '' } }
 const readRegistry = () => { try { return fs.readFileSync(registryFile(), 'utf8') } catch { return '' } }
-const readState = () => { try { return JSON.parse(fs.readFileSync(stateFile(), 'utf8')) } catch { return {} } }
-const findOutputByWatermark = (w) => Object.values(readState().outputs || {}).find((o) => o && String(o.source_watermark) === w)
+const findOutputByWatermark = (w) => Object.values(outputListOf(domain)).find((o) => o && String(o.source_watermark) === w)
 
 let failed = 0
 const check = (cond, msg) => {
@@ -76,13 +59,13 @@ const check = (cond, msg) => {
 
 try {
   await apply(ctx, {})
-  assert.ok(tools['memory__stage1_drain'], 'memory__stage1_drain tool registered')
-  assert.ok(tools['memory__phase2_integrate'], 'memory__phase2_integrate tool registered')
+  assert.ok(ctx.tools['memory__stage1_drain'], 'memory__stage1_drain tool registered')
+  assert.ok(ctx.tools['memory__phase2_integrate'], 'memory__phase2_integrate tool registered')
 
   // 预置一个可提炼的 pending job（available now）。
-  enqueueStage1JobFile(stateFile(), 's1', 'wm-auto', new Date())
+  await seedJob(domain, 's1', 'wm-auto')
 
-  const res = await tools['memory__stage1_drain'].execute({})
+  const res = await ctx.tools['memory__stage1_drain'].execute({})
   console.log('  drain processed:', res.processed)
 
   // drain 消费了作业并产出增量产物
@@ -99,7 +82,7 @@ try {
   check(readSummary() === CONSOLIDATION.memory_summary, 'memory_summary.md published with LLM consolidation content')
   check(readRegistry() === CONSOLIDATION.registry, 'MEMORY.md published with LLM consolidation content')
 
-  const st = readState()
+  const st = { global: metaOf(domain) }
   check(st.global.lastSuccessWatermark === 'wm-auto', 'lastSuccessWatermark advanced to wm-auto')
   check(!!st.global.lastPhase2At, 'lastPhase2At set by auto phase2')
   check(st.global.phase2_last_error === '', 'phase2_last_error cleared on success')

@@ -8,20 +8,10 @@ import assert from 'node:assert'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { makeCtx, jobListOf } from './lib/helpers.mjs'
 
 const PLUGIN = 'file:///D:/%E8%BD%AF%E4%BB%B6/Deepseek/plugins/dsh-rollout/lib/index.js'
 const { apply } = await import(PLUGIN)
-
-const table = (() => {
-  const m = new Map()
-  return {
-    put: (k, v) => { m.set(k, v); return Promise.resolve() },
-    delete: (k) => Promise.resolve(m.delete(k)),
-    keys: () => m.keys(),
-    entries: () => m.entries(),
-    get size() { return m.size },
-  }
-})()
 
 const eventHandlers = {}
 
@@ -45,23 +35,16 @@ const longMsg = (id) => 'this is a reasonably long message for session ' + id + 
 const msgEvent = (id) => ({ type: 'user/message', seq: 0, time: 0, surfaceOp: 'append', data: { id, role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: longMsg(id) }] } })
 const readSession = async (id) => ({ session: { version: 0, id, cwd: 'C:/' + id, createdAt: 0 }, events: [msgEvent(id)] })
 
-const ctx = {
-  storageDomain: { open: async () => ({ table: (name) => table, close: async () => {} }) },
+const { ctx, domain } = makeCtx({
   get: (k) => (k === 'llm' ? llmMock : k === 'agentDefaultModel' ? { currentSelection: () => ({ provider: 'p', model: 'm' }) } : k === 'sessionQuery' ? { readSession } : undefined),
-  tools: { register: () => {} },
-  systemPrompt: { section: () => {} },
-  effect: (fn) => fn(),
   on: (ev, cb) => { eventHandlers[ev] = cb; return () => {} },
-}
+})
 
 const tmpHome = path.join(os.tmpdir(), 'dsh-rollout-queue-' + Date.now())
 process.env.DSH_HOME = tmpHome
 fs.mkdirSync(tmpHome, { recursive: true })
 const memoryRoot = () => path.join(tmpHome, 'memories')
-const stage1File = () => path.join(memoryRoot(), '.stage1-state.json')
-const readState = () => {
-  try { return JSON.parse(fs.readFileSync(stage1File(), 'utf8')) } catch { return { jobs: {} } }
-}
+const readState = () => ({ jobs: jobListOf(domain) })
 const session = (id) => ({
   id,
   header: { cwd: 'C:/' + id },

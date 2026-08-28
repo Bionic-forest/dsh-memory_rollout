@@ -7,33 +7,19 @@ import assert from 'node:assert'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { makeCtx, jobListOf } from './lib/helpers.mjs'
 
 const PLUGIN = 'file:///D:/%E8%BD%AF%E4%BB%B6/Deepseek/plugins/dsh-rollout/lib/index.js'
 const { apply } = await import(PLUGIN)
-
-const table = (() => {
-  const m = new Map()
-  return {
-    put: (k, v) => { m.set(k, v); return Promise.resolve() },
-    delete: (k) => Promise.resolve(m.delete(k)),
-    keys: () => m.keys(),
-    entries: () => m.entries(),
-    get size() { return m.size },
-  }
-})()
 
 const eventHandlers = {}
 const queryMock = {
   readSession: async (id) => ({ session: { version: 0, id, cwd: 'C:/' + id, createdAt: 0 }, events: [] }),
 }
-const ctx = {
-  storageDomain: { open: async () => ({ table: (name) => table, close: async () => {} }) },
+const { ctx, domain } = makeCtx({
   get: (k) => (k === 'sessionQuery' ? queryMock : undefined),
-  tools: { register: () => {} },
-  systemPrompt: { section: () => {} },
-  effect: (fn) => fn(),
   on: (ev, cb) => { eventHandlers[ev] = cb; return () => {} },
-}
+})
 
 const tmpHome = path.join(os.tmpdir(), 'dsh-rollout-p03-test-' + Date.now())
 process.env.DSH_HOME = tmpHome
@@ -48,8 +34,7 @@ const check = (cond, msg) => {
 const memoryRoot = () => path.join(tmpHome, 'memories')
 const summariesDir = () => path.join(memoryRoot(), 'rollout_summaries')
 const readDraft = (name) => fs.readFileSync(path.join(summariesDir(), name), 'utf8')
-const stage1File = () => path.join(memoryRoot(), '.stage1-state.json')
-const readStage1 = () => { try { return JSON.parse(fs.readFileSync(stage1File(), 'utf8')) } catch { return { jobs: {} } } }
+const readJobs = () => jobListOf(domain)
 const waitUntil = async (fn, ms) => {
   const t0 = Date.now()
   while (Date.now() - t0 < ms) {
@@ -83,7 +68,7 @@ try {
   assert.ok(eventHandlers['session/disposed'], 'session/disposed handler registered')
   eventHandlers['session/disposed']({ id: 'trigger', header: { cwd: 'C:/trigger' } })
   const trigDone = await waitUntil(() => {
-    const j = Object.values(readStage1().jobs || {}).find((x) => String(x.session_id) === 'trigger')
+    const j = Object.values(readJobs()).find((x) => String(x.session_id) === 'trigger')
     return j && j.status !== 'pending'
   }, 3000)
 
@@ -91,7 +76,7 @@ try {
   check(readDraft('secNoNew.md') === noNewDraft, 'secNoNew draft byte-identical (skipped, not rewritten)')
   check(readDraft('secNew.md') === newDraft, 'secNew draft byte-identical (not re-wrapped)')
 
-  const jobs = readStage1().jobs || {}
+  const jobs = readJobs()
   const trigJob = Object.values(jobs).find((x) => String(x.session_id) === 'trigger')
   check(trigDone && trigJob && trigJob.status === 'succeeded_no_output', 'trigger is a no-output no-op (empty transcript) — proves drain ran')
   check(!Object.keys(jobs).some((k) => k.startsWith('secNoNew::')), 'no stage-1 job for secNoNew (skipped, not re-drafted)')
