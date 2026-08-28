@@ -165,7 +165,7 @@ entries 增 `last_used_at/usage_count/status`；`recall` 排序纳入相关性+�
 
 ### 说明 / 边界
 - `memory_changes` 表未接入（属下一第 4 步）；本步 Phase 2 只消费 `stage1_outputs`（不可变批次）。
-- `stage1_loadState/saveStage1State` 遗留旧 helpers（无调用点），保留以免越界改动 Stage1 核心。
+- `stage1_loadState/saveStage1State` 遗留旧 helpers（无调用点）；已在返工收尾删除（见 CHANGELOG 最新一节）。
 
 ### 成熟度
 L2 → L2+/L3 中段（Phase 2 持久化 + 版本化发布落地，消除 P0-6/P0-7/P0-8）。
