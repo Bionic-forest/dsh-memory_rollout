@@ -121,8 +121,9 @@ async function runSecondary({ secMessage, llmMode /* 'none' | 'ok' | 'empty' */ 
   const secOutput = secJob ? outputs[secJob.id] : undefined
   const secDraft = path.join(tmp, 'memories', 'rollout_summaries', 'sec.md')
   const existsDraft = fs.existsSync(secDraft)
+  const secDraftTxt = existsDraft ? fs.readFileSync(secDraft, 'utf8') : ''
   fs.rmSync(tmp, { recursive: true, force: true })
-  return { done, secJob, secOutput, existsDraft, trigJob }
+  return { done, secJob, secOutput, existsDraft, secDraftTxt, trigJob }
 }
 
 const LONG = 'the deployment used a stable release with all the tests passing in one go today'
@@ -146,7 +147,11 @@ console.log('[2] secondary, LLM ok → with_output, refined summary written')
   check(r.secJob && r.secJob.status === 'succeeded_with_output', 'secondary status = succeeded_with_output')
   check(r.secOutput && r.secOutput.rollout_summary === 'good durable summary', 'secondary output has refined summary (not raw)')
   check(r.secOutput && r.secOutput.rollout_summary.indexOf('the deployment used a stable') === -1, 'secondary output does NOT contain raw transcript')
-  check(r.existsDraft === false, 'no draft file written (output lives in stage1-state)')
+  // P1-1：stage-1 提炼成功会自动产出逐会话证据文件（rollout_summaries/<session>.md），内容非空。
+  // 该文件承载的是精炼摘要（可由 evidence session 复核），绝不落原始 transcript。
+  check(r.existsDraft === true, 'evidence file written for succeeded_with_output (P1-1)')
+  check(r.secDraftTxt.indexOf('good durable summary') !== -1, 'evidence file carries the refined summary')
+  check(r.secDraftTxt.indexOf('the deployment used a stable') === -1, 'evidence file does NOT carry the raw transcript')
 }
 
 // ── 3) secondary + LLM empty summary → no_output, nothing written ─────────
