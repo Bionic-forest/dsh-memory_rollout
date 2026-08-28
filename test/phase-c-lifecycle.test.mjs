@@ -20,9 +20,37 @@ const table = (() => {
   }
 })()
 
+// 真实 dsh-storage-domain 是多表隔离；本夹具只把 `entries` 保持在测试直接引用的 `table` 上，
+// 其余表（stage1_jobs/stage1_outputs/phase2_jobs/memory_changes 等）用独立 Map，防止 `table.size`
+// 被非 entries 表污染（第三轮返工第 4 步引入 memory_changes 后必须如此）。
+const makeExtraTable = (backing) => ({
+  put: (k, v) => { backing.set(k, v); return Promise.resolve() },
+  get: (k) => backing.get(k),
+  delete: (k) => Promise.resolve(backing.delete(k)),
+  keys: () => backing.keys(),
+  entries: () => backing.entries(),
+  update: (k, fn) => {
+    if (!backing.has(k)) return Promise.reject(new Error(`missing-key: ${k}`))
+    const n = fn(backing.get(k))
+    backing.set(k, n)
+    return Promise.resolve(n)
+  },
+  get size() { return backing.size },
+})
+const extraTables = new Map()
+
 const tools = {}
 const ctx = {
-  storageDomain: { open: async () => ({ table: (name) => table, close: async () => {} }) },
+  storageDomain: {
+    open: async () => ({
+      table: (name) => {
+        if (name === 'entries') return table
+        if (!extraTables.has(name)) extraTables.set(name, makeExtraTable(new Map()))
+        return extraTables.get(name)
+      },
+      close: async () => {},
+    }),
+  },
   get: () => undefined,
   tools: { register: (t) => { tools[t.name] = t } },
   systemPrompt: { section: () => {} },
