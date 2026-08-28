@@ -1,5 +1,6 @@
 // 阶段 C（M6）：memory_recall 排序纳入新鲜度/使用反馈 + 召回后记录 usage；
-// 以及 L7：memory_forget 只允许按精确 id 删除、禁用 tag 批量删除（§10.3）。
+// 以及 L7：memory_forget 只允许按精确 id 处理、禁用 tag 批量删除（§10.3）；
+// P1-4：forget 置墓碑（status=forgotten）而非物理删除，墓碑条目绝不再被召回。
 import assert from 'node:assert'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -88,13 +89,19 @@ try {
     check(usageOf('unused-entry') === 1, 'unused-entry usage_count incremented 0 -> 1 on recall')
   }
 
-  // ── [4] L7: forget by exact id deletes only that entry ────────────────────────
-  console.log('[4] memory_forget deletes only the exact id, never by tag')
+  // ── [4] P1-4/§10.3: forget tombstones the entry (status=forgotten), never by tag ──
+  // 设计强制：memory_forget 置墓碑而非物理删除 —— 条目保留（可溯源），但从召回/读取路径排除。
+  console.log('[4] P1-4: memory_forget tombstones the exact id, never by tag')
   {
     const r = await tools.memory_forget.execute({ id: 'shared-a' })
-    check(r.deleted === 1, 'exact-id delete removed 1 entry')
-    check(findEntry('shared-a') === null, 'shared-a removed')
+    check(r.deleted === 1, 'exact-id forget processed 1 entry')
+    const a = findEntry('shared-a')
+    check(a !== null && a.status === 'forgotten', 'shared-a kept but marked forgotten (tombstone)')
     check(findEntry('shared-b') !== null, 'shared-b untouched')
+    // 墓碑条目绝不再被召回（高相关性也不返回）。
+    const sr = await tools.memory_recall.execute({ query: 'shared', limit: 10 })
+    check(!sr.entries.some((e) => e.id === 'shared-a'), 'forgotten shared-a is NOT recalled')
+    check(sr.entries.some((e) => e.id === 'shared-b'), 'active shared-b still recalled')
   }
 
   // ── [5] L7: tag-based batch delete is disabled (throws, deletes nothing) ──────
