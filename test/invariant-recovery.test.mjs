@@ -65,30 +65,36 @@ try {
     check(!(j.status === 'succeeded_with_output' && !out), 'invariant repaired: no succeeded_with_output without output')
   }
 
-  // ── P0-4：stage1_output 的 batch 指向失败终态批次（孤儿）→ 接触绑定并重整 ──
-  console.log('[P0-4] phase2「input 绑定到失败终态批次」孤儿 → 恢复扫描解除绑定并重新消费')
+  // ── P0-4：真孤儿（批不存在）被解绑并重整；failed_terminal 批的 inputs 不被解绑（防无限重试）──
+  console.log('[P0-4] phase2 孤儿绑定：真孤儿(批不存在)解绑重整；failed_terminal 批 inputs 不自动解绑')
   {
-    await seedOutput(domain, 'j-orphan', {
-      session_id: 's4', source_watermark: 'wm4', rollout_summary: 'ORPHAN', generated_at: '2026-01-01T00:00:00.000Z',
+    // A：真孤儿——input 指向一个「不存在」的批 → 应被解绑并重新消费。
+    await seedOutput(domain, 'j-orphan-a', {
+      session_id: 's4a', source_watermark: 'wm4a', rollout_summary: 'ORPHAN_A', generated_at: '2026-01-01T00:00:00.000Z',
+      phase2_batch_id: 'b-missing', selected_for_phase2: false,
+    })
+    // B：failed_terminal 批是「真实存在」的终态批——其 inputs 应保留绑定（不退化为无限重试）。
+    await seedOutput(domain, 'j-orphan-b', {
+      session_id: 's4b', source_watermark: 'wm4b', rollout_summary: 'ORPHAN_B', generated_at: '2026-01-01T00:00:01.000Z',
       phase2_batch_id: 'b-failed', selected_for_phase2: false,
     })
-    // 构造一个失败终态批次 b-failed，它的 input_ids 指回 j-orphan（孤儿占用：批不存在可消费路径）。
     await domain.table('phase2_jobs').put('b-failed', {
-      id: 'b-failed', status: 'failed_terminal', input_ids: ['j-orphan'], change_ids: [], lease_owner: '', lease_expires_at: '',
+      id: 'b-failed', status: 'failed_terminal', input_ids: ['j-orphan-b'], change_ids: [], lease_owner: '', lease_expires_at: '',
       attempt_count: 3, max_attempts: 3, available_at: '', staging_version: '', last_error: 'llm-down', created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
     })
     consolidationCalls = 0
     const r = await ctx.tools['memory__phase2_integrate'].execute({})
-    check(r.ran === true && r.ok === true, 'phase2 rescue round-trips (orphan re-consumed)')
-    const o = readOutputs(domain)['j-orphan']
-    check(o && o.selected_for_phase2 === true, 'orphan output now consumed (rescued into a new batch)')
-    check(o && o.phase2_batch_id && o.phase2_batch_id !== 'b-failed', 'orphan rebound to a live batch, no longer pointing at failed_terminal')
-    const live = Array.from(domain.table('phase2_jobs').entries()).find(([, j]) => j && j.status === 'committed' && Array.isArray(j.input_ids) && j.input_ids.includes('j-orphan'))
-    check(!!live, 'a COMMITTED batch owns the orphan input (not stuck at failed_terminal)')
-    // 孤儿 output 的当前绑定必须指向一个「存在且非失败终态」的批（不再悬空/不再卡死）。
-    const curBinding = readOutputs(domain)['j-orphan'].phase2_batch_id
-    const curJob = curBinding ? domain.table('phase2_jobs').get(curBinding) : null
-    check(curJob && curJob.status !== 'failed_terminal', 'orphan currently bound to a live (non-failed-terminal) batch')
+    // A 被解绑并重整为一个 committed 批
+    const oa = readOutputs(domain)['j-orphan-a']
+    check(oa && oa.selected_for_phase2 === true, '真孤儿 A 已解绑并被重新消费')
+    check(oa && oa.phase2_batch_id && oa.phase2_batch_id !== 'b-missing', '真孤儿 A 重新绑定到新批（不再是 b-missing）')
+    // B 保持绑定到 failed_terminal 批（不被解绑、不被重选）→ 不会退化成无限重试
+    const ob = readOutputs(domain)['j-orphan-b']
+    check(ob && ob.phase2_batch_id === 'b-failed', 'failed_terminal 批的 input B 仍绑定 b-failed（不解绑）')
+    check(ob && ob.selected_for_phase2 !== true, 'B 未被消费（bound 到 failed_terminal，不自动重入队）')
+    check(consolidationCalls === 1, '只发起 A 一个真实整合（B 不产生额外批，无无限重试）')
+    const live = Array.from(domain.table('phase2_jobs').entries()).find(([, j]) => j && j.status === 'committed' && Array.isArray(j.input_ids) && j.input_ids.includes('j-orphan-a'))
+    check(!!live, '真孤儿 A 整入一个 committed 批（批存在）')
   }
 } finally {
   try { fs.rmSync(tmp, { recursive: true, force: true }) } catch {}
