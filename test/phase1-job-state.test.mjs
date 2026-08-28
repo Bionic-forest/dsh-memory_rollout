@@ -5,7 +5,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
-const PLUGIN = 'file:///D:/%E8%BD%AF%E4%BB%B6/Deepseek/plugins/dsh-rollout/lib/index.js'
+const PLUGIN = new URL('../lib/index.js', import.meta.url).href
 const { stage1BackoffSeconds, reclaimStage1Jobs, mergeStage1Job, stage1Recover, claimStage1Job, enqueueStage1JobFile, stage1FinishJob, contentWatermark } = await import(PLUGIN)
 
 let failed = 0

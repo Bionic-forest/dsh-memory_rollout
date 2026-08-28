@@ -16,7 +16,7 @@ Inspired by the [Codex memory model](https://github.com/openai/codex) — layere
 - **Layered disclosure** — `memory_summary.md` (摘要, injected into the prompt) + `MEMORY.md` (searchable registry) + `rollout_summaries/` (per-session drafts) + notes. Grep-friendly, no full-scan.
 - **Restrained & passive** — the memory is written only on explicit user request; a decision boundary + quick memory pass (≤ 4-6 steps) guard when to look up memory, so it never floods the context.
 - **Idempotent integration** — a fingerprint + watermark gate skips re-integration when nothing changed (no wasted tokens).
-- **6 model tools** — `memory_remember` / `memory_recall` / `memory_forget` / `memory_draft` / `memory_note` / `memory_integrate`.
+- **6 user-facing tools** — `memory_remember` / `memory_recall` / `memory_forget` / `memory_note` / `memory_integrate` / `memory_precompact`, plus two `memory__*` internal scheduler tools for operations and tests.
 - **Browser management page** — a "记忆库 / Memory" page to browse summaries, registry, drafts, and notes.
 
 ## Install
@@ -46,13 +46,13 @@ Tell the agent to remember something, or do it yourself:
 
 > "记住：这个项目的部署目标是 Windows，测试命令是 `pnpm test`。"
 
-The agent writes a per-session draft with `memory_draft`, or a durable fact with `memory_remember`:
+The agent writes durable facts with `memory_remember`, explicit update notes with `memory_note`, and pre-compaction checkpoints with `memory_precompact`:
 
 ```
-memory_draft(content="本会话结论：…", title="xxx")   # → rollout_summaries/<sessionId>.md
 memory_remember(content="用户偏好…", tags=["pref"])   # → 长期记忆（带来源 sessionId）
 memory_note(slug="fix-x", content="…")               # → 临时 note（用户显式要求时）
 memory_integrate()                                    # → 幂等整合 summary/MEMORY.md
+memory_precompact(content="要留的关键要点")          # → draft + durable queue before compaction
 ```
 
 When context from an earlier session matters, the agent runs a quick memory pass: skim the injected summary → search `MEMORY.md` → open 1-2 relevant drafts → stop if no hits. `memory_recall(query="…")` is the explicit search entry.
@@ -64,22 +64,19 @@ The plugin exposes a schemastery config schema. The full parameter table:
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `recallLimit` | int | 10 | Max entries returned by `memory_recall` |
-| `injectLimit` | int | 8 | Kept for config compatibility; this build injects only the memory summary |
-| `summaryTokens` | int | 2500 | Max chars of `memory_summary.md` injected |
+| `summaryTokens` | int | 4000 | Approximate token budget for injected `memory_summary.md` |
 | `maxQuickSteps` | int | 5 | Quick memory pass search-step budget |
 | `memoryRoot` | string | `''` | Optional override of the memory root; empty = `<ds_home>/memories` |
 | `autoTrigger` | `'sessionEnd'` \| `'off'` | `'sessionEnd'` | Auto-trigger mode: `sessionEnd` runs the pipeline on session dispose, `off` disables it (manual tools still work) |
-| `minIdleHours` | number | 6 | Idle hours before a session becomes a pipeline candidate |
-| `maxDraftAgeDays` | number | 10 | Skip candidate sessions whose draft is older than this (stale pruning) |
-| `maxExtractPerTrigger` | number | 2 | Max candidate sessions drafted per pipeline run |
-| `maxPipelineRunsPerDay` | number | 12 | Max pipeline runs per calendar day (runaway budget) |
+| `maxModelAttemptsPerDay` | number | 24 | Daily Stage 1 model-attempt cap; failed attempts count |
 | `precompactAuto` | boolean | `false` | Also drain on `compaction/start` when true |
 | `extractProvider` | string | `''` | Provider route for LLM extraction; empty = harness default |
 | `extractModel` | string | `''` | Provider model id for extraction; empty = harness default |
 | `extractReasoningEffort` | string | `'low'` | Reasoning effort for extraction (adapter vocab) |
 | `maxExtractTokens` | number | 8000 | Coarse input-token cap for the transcript fed to the LLM |
-| `consolidationProvider` | string | `''` | Reserved for a later consolidation pass; not wired |
-| `consolidationModel` | string | `''` | Reserved for a later consolidation pass; not wired |
+| `consolidationProvider` | string | `''` | Provider route for Phase 2 consolidation; empty = harness default |
+| `consolidationModel` | string | `''` | Model id for Phase 2 consolidation; empty = harness default |
+| `consolidationReasoningEffort` | string | `''` | Reasoning effort for Phase 2 consolidation; empty = model default |
 
 ```yaml
 - id: dsh-rollout
@@ -91,8 +88,8 @@ The plugin exposes a schemastery config schema. The full parameter table:
 
 The settings page can edit these at runtime (see below). Runtime edits are persisted to
 `<ds_home>/dsh-rollout.settings.json` and re-applied on the next startup, taking precedence
-over `cordis.patch.yml`. `memoryRoot` and the two reserved `consolidation*` fields are
-read-only. Changes you make in the settings page affect the live process immediately.
+over `cordis.patch.yml`. `memoryRoot` is read-only. Changes you make in the settings
+page affect the live process immediately.
 
 ## Memory layout
 

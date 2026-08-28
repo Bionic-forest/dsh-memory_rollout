@@ -53,9 +53,9 @@ Key invariants to preserve when you edit:
   automatic trigger (session end / precompact), never passively on every turn.
 - **Idempotent integration**: `integrate()` uses a fingerprint + watermark; if
   nothing changed it's a no-op (no wasted tokens).
-- **克制的 LLM**: the extraction step calls `ctx.llm` only on a trigger and only
-  on the trigger session, throttled by `maxPipelineRunsPerDay` /
-  `maxExtractPerTrigger`; every LLM failure falls back to the literal snapshot.
+- **克制的 LLM**: the extraction step calls `ctx.llm` only for durable Stage 1
+  jobs and is throttled by `maxModelAttemptsPerDay`; failures retry through the
+  persistent queue and never write a dirty literal snapshot as memory.
 
 ## How to run / test locally
 

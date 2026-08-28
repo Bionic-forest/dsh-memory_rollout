@@ -18,7 +18,7 @@ DSH 的每个会话都从零开始。你开了新会话，Agent 不知道上一�
 - **分层渐进披露** — `memory_summary.md`（总纲，注入提示）+ `MEMORY.md`（可搜索注册表）+ `rollout_summaries/`（逐会话草稿）+ notes。**可 grep、不全扫**，查的时候只翻该看的。
 - **克制被动** — 记忆只在**用户显式要求**或**自动触发**时写；配一套「**决策边界 + 快速记忆通道（≤4-6 步）**」，决定什么时候才值得查记忆，绝不把上下文淹没。
 - **幂等整合** — `fingerprint + watermark` 门槛，**没变化就跳过**，不浪费 token。
-- **7 个模型工具** — `memory_remember` / `memory_recall` / `memory_forget` / `memory_draft` / `memory_note` / `memory_integrate` / `memory_precompact`。
+- **6 个用户工具** — `memory_remember` / `memory_recall` / `memory_forget` / `memory_note` / `memory_integrate` / `memory_precompact`；另有两个 `memory__*` 内部调度工具供运维与验收。
 - **浏览器管理页** — 「记忆库 / Memory」设置页，能浏览摘要、注册表、草稿、笔记，还能**改配置、导入导出记忆**。
 
 ## 安装
@@ -48,14 +48,13 @@ pnpm add dsh-rollout
 
 > "记住：这个项目的部署目标是 Windows，测试命令是 `pnpm test`。"
 
-Agent 用 `memory_draft` 写本会话草稿，或用 `memory_remember` 写长期事实：
+Agent 用 `memory_remember` 写长期事实；显式更新写 note；压缩前关键内容走 precompact：
 
 ```
-memory_draft(content="本会话结论：…", title="xxx")    # → rollout_summaries/<sessionId>.md
 memory_remember(content="用户偏好…", tags=["pref"])    # → 长期记忆（带来源 sessionId）
 memory_note(slug="fix-x", content="…")                # → 临时 note（用户显式要求时）
 memory_integrate()                                     # → 幂等整合 summary/MEMORY.md
-memory_precompact(content="要留的关键要点")           # → 压缩前防丢信息（写入草稿+整合）
+memory_precompact(content="要留的关键要点")           # → 压缩前防丢信息（写草稿+持久队列）
 ```
 
 当涉及先前会话的上下文时，Agent 跑一次**快速记忆通道**：扫注入总纲 → 搜 `MEMORY.md` → 打开 1-2 个相关草稿 → 无命中即停。`memory_recall(query="…")` 是显式搜索入口。
@@ -67,22 +66,19 @@ memory_precompact(content="要留的关键要点")           # → 压缩前防�
 | 键 | 类型 | 默认 | 含义 |
 | --- | --- | --- | --- |
 | `recallLimit` | int | 10 | `memory_recall` 一次返回的最大条目数 |
-| `injectLimit` | int | 8 | 保留用于配置兼容；本版本只注入记忆摘要 |
 | `summaryTokens` | int | 4000 | 注入的 `memory_summary.md` 最大 token 数，越大注入越多但更占上下文 |
 | `maxQuickSteps` | int | 5 | 快速记忆通道的搜索步数预算（≤12） |
 | `memoryRoot` | string | `''` | 可选覆盖记忆根目录；空 = `<ds_home>/memories` |
 | `autoTrigger` | `'sessionEnd'` \| `'off'` | `'sessionEnd'` | 自动触发：`sessionEnd` 会话结束时跑管线；`off` 关闭（手动工具仍可用） |
-| `minIdleHours` | number | 6 | 会话成为管线候选的最小空闲小时（防提炼活跃会话） |
-| `maxDraftAgeDays` | number | 10 | 草稿比这更旧的候选会话被跳过 |
-| `maxExtractPerTrigger` | number | 2 | 每次管线最多写草稿的候选会话数（节流） |
-| `maxPipelineRunsPerDay` | number | 12 | 每日历日管线运行上限（防自动 LLM 吃光配额） |
+| `maxModelAttemptsPerDay` | number | 24 | 每日 Stage 1 模型尝试上限（失败尝试也计数） |
 | `precompactAuto` | boolean | `false` | true 时也在 `compaction/start` 跑前置整理（防压缩丢信息） |
 | `extractProvider` | string | `''` | LLM 提炼所用的 Provider 路由；空 = harness 默认 |
 | `extractModel` | string | `''` | LLM 提炼所用的模型 id；空 = harness 默认 |
 | `extractReasoningEffort` | string | `'low'` | 提炼的推理强度（adapter 词汇；若模型拒绝会自动去掉重试） |
 | `maxExtractTokens` | number | 8000 | 喂给 LLM 的转录输入粗算 token 上限（超长先截断） |
-| `consolidationProvider` | string | `''` | 预留用于后续整合 pass；本版本未接线 |
-| `consolidationModel` | string | `''` | 预留用于后续整合 pass；本版本未接线 |
+| `consolidationProvider` | string | `''` | Phase 2 全局整合使用的 Provider；空 = harness 默认 |
+| `consolidationModel` | string | `''` | Phase 2 全局整合使用的模型；空 = harness 默认 |
+| `consolidationReasoningEffort` | string | `''` | Phase 2 整合推理强度；空 = 模型默认 |
 
 ```yaml
 - id: dsh-rollout
@@ -92,7 +88,7 @@ memory_precompact(content="要留的关键要点")           # → 压缩前防�
     maxQuickSteps: 5
 ```
 
-设置页可在运行时编辑这些参数。改动持久化到 `<ds_home>/dsh-rollout.settings.json`，下次启动重新应用（优先于 `cordis.patch.yml`）。`memoryRoot` 与两个预留的 `consolidation*` 字段为只读。
+设置页可在运行时编辑这些参数。改动持久化到 `<ds_home>/dsh-rollout.settings.json`，下次启动重新应用（优先于 `cordis.patch.yml`）。`memoryRoot` 为只读。
 
 ## 记忆布局
 

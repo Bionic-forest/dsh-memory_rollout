@@ -13,5 +13,6 @@
 .idea/
 
 # Build artifacts (if a build step is ever added)
+node_modules/
 dist/
 *.tgz

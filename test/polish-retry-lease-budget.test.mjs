@@ -19,7 +19,7 @@ const HOME = path.join(os.tmpdir(), 'dsh-rollout-polish-' + Math.random().toStri
 fs.mkdirSync(HOME, { recursive: true })
 process.env.DSH_HOME = HOME
 
-const PLUGIN = 'file:///D:/%E8%BD%AF%E4%BB%B6/Deepseek/plugins/dsh-rollout/lib/index.js'
+const PLUGIN = new URL('../lib/index.js', import.meta.url).href
 const { apply } = await import(PLUGIN)
 
 const dayKey = (d = new Date()) => d.toISOString().slice(0, 10)

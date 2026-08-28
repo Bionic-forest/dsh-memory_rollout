@@ -7,7 +7,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
-const PLUGIN = 'file:///D:/%E8%BD%AF%E4%BB%B6/Deepseek/plugins/dsh-rollout/lib/index.js'
+const PLUGIN = new URL('../lib/index.js', import.meta.url).href
 const { apply, redactSecrets } = await import(PLUGIN)
 import { createFakeDomain, jobListOf, outputListOf } from './lib/helpers.mjs'
 
@@ -130,10 +130,6 @@ console.log('\n[C] pipeline extract output redacts secrets (D1 transcript + D3 w
     }
     const config = {
       autoTrigger: 'sessionEnd',
-      minIdleHours: 0,
-      maxDraftAgeDays: 10,
-      maxExtractPerTrigger: 2,
-      maxPipelineRunsPerDay: 100,
       precompactAuto: false,
       extractProvider: '',
       extractModel: '',

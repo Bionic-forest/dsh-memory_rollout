@@ -13,7 +13,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { makeCtx, seedOutput, setMeta, metaOf, outputListOf } from './lib/helpers.mjs'
 
-const PLUGIN = 'file:///D:/%E8%BD%AF%E4%BB%B6/Deepseek/plugins/dsh-rollout/lib/index.js'
+const PLUGIN = new URL('../lib/index.js', import.meta.url).href
 const { apply } = await import(PLUGIN)
 
 // ── controllable LLM mock ───────────────────────────────────────────────────

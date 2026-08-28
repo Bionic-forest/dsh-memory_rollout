@@ -3,7 +3,7 @@
 //     不再依赖单一 lastSuccessWatermark 基线的相等比较（避免重复/漏整合）。
 // M3：validatePhase2Output 增加 memory_summary 首行裸 `v1` 校验 + registry 安全引用校验。
 import assert from 'node:assert'
-const PLUGIN = 'file:///D:/%E8%BD%AF%E4%BB%B6/Deepseek/plugins/dsh-rollout/lib/index.js'
+const PLUGIN = new URL('../lib/index.js', import.meta.url).href
 const { selectPhase2Inputs, validatePhase2Output } = await import(PLUGIN)
 let failed = 0
 const check = (cond, msg) => { if (cond) console.log('  ✓ ', msg); else { failed++; console.error('  ✗ ', msg) } }

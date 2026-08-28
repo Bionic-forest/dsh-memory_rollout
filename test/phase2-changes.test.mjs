@@ -13,7 +13,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { makeCtx, seedOutput, setMeta } from './lib/helpers.mjs'
 
-const PLUGIN = 'file:///D:/%E8%BD%AF%E4%BB%B6/Deepseek/plugins/dsh-rollout/lib/index.js'
+const PLUGIN = new URL('../lib/index.js', import.meta.url).href
 const { apply } = await import(PLUGIN)
 
 // ── controllable LLM mock ───────────────────────────────────────────────────
@@ -87,7 +87,6 @@ try {
   assert.ok(tools['memory_remember'], 'memory_remember registered')
   assert.ok(tools['memory_forget'], 'memory_forget registered')
   assert.ok(tools['memory_note'], 'memory_note registered')
-  assert.ok(tools['memory_draft'], 'memory_draft registered')
   assert.ok(tools['memory__phase2_integrate'], 'memory__phase2_integrate registered')
 
   // ── ① remember 入流 → 下一批权威版本含该内容 ──────────────────────────────
@@ -175,8 +174,8 @@ try {
     check(currentRegistry().includes(sameWord), 'new same-word content present in authoritative registry')
   }
 
-  // ── ④ note/draft 入流（有 source_ref）且进权威版本 ───────────────────────
-  console.log('[④] note/draft 内容有 source_ref 且随批进权威版本')
+  // ── ④ note 入流（有 source_ref）且进权威版本 ─────────────────────────────
+  console.log('[④] note 内容有 source_ref 且随批进权威版本')
   {
     const noteContent = 'user prefers concise answers with tables'
     llmResponse = { memory_summary: 'v1\n## consolidated\n' + noteContent, registry: '# MEMORY.md\n- ' + noteContent }
@@ -185,18 +184,11 @@ try {
     check(changesOf('note').length === 1, 'a kind=note change entered the stream')
     check(changesOf('note')[0].source_ref === rNote.file, 'note change carries source_ref')
     check(changesOf('note')[0].payload.content === noteContent, 'note change payload carries the content')
-    // 再来一个 draft。
-    const draftContent = 'this session decided to adopt the memory change stream'
-    const rDraft = await tools.memory_draft.execute({ content: draftContent, title: 'draft title' }, { agent: { session: { id: 't-draft' } } })
-    check(!!rDraft.file, 'draft wrote a file')
-    check(changesOf('draft').length === 1, 'a kind=draft change entered the stream')
-    check(changesOf('draft')[0].source_ref === rDraft.file, 'draft change carries source_ref')
-    // 下一批：note + draft 两变更同批消费，权威版本含两者。
-    llmResponse = { memory_summary: 'v1\n## consolidated\n' + noteContent + '\n' + draftContent, registry: '# MEMORY.md\n- ' + noteContent + '\n- ' + draftContent }
+    llmResponse = { memory_summary: 'v1\n## consolidated\n' + noteContent, registry: '# MEMORY.md\n- ' + noteContent }
     const r = await tools['memory__phase2_integrate'].execute({})
     check(r.ran === true && r.ok === true, 'batch committed')
-    check(currentSummary().includes(noteContent) && currentSummary().includes(draftContent), 'authoritative summary reflects note+draft')
-    check(changesOf('note')[0].status === 'consumed' && changesOf('draft')[0].status === 'consumed', 'note+draft changes consumed')
+    check(currentSummary().includes(noteContent), 'authoritative summary reflects note')
+    check(changesOf('note')[0].status === 'consumed', 'note change consumed')
     check(changesPending().length === 0, 'no pending changes remain after batch')
   }
 

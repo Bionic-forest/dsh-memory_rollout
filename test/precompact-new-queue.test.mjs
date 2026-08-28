@@ -2,9 +2,9 @@
 // 验证（行为层）：
 //   ① compaction/start（precompactAuto 开）→ 走新队列：stage1_jobs 入队（该会话作 Stage1 作业）
 //      + scheduleStage1Drain 消费；旧 .pipeline-state.json 不写（不存在）。
-//   ② memory_precompact → 走新队列：stage1_jobs 入队 + 该会话水位写入 stage1_meta.sessions；
+//   ② memory_precompact → 走新队列：stage1_jobs 入队，不再写无消费者的 stage1_meta.sessions；
 //      旧 .pipeline-state.json / 旧 .stage1-state.json 均不存在。
-//   ③ turn/end → 该会话活动水位写 stage1_meta.sessions（不再写旧 .pipeline-state.json）。
+//   ③ turn/end 不再做活动水位持久写；新队列以 session+content watermark 判断新活动。
 //   ④ 旧管线函数不可达：lib/index.js 源码中不再出现 runPipeline/kickPipeline/pipelinePhase1/
 //      pipelinePhase2/pendingPipeline/loadPipelineState/savePipelineState/.pipeline-state.json（仅注释可留）。
 import assert from 'node:assert'
@@ -13,7 +13,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { makeCtx, jobListOf, metaOf } from './lib/helpers.mjs'
 
-const PLUGIN = 'file:///D:/%E8%BD%AF%E4%BB%B6/Deepseek/plugins/dsh-rollout/lib/index.js'
+const PLUGIN = new URL('../lib/index.js', import.meta.url).href
 const { apply, contentWatermark } = await import(PLUGIN)
 
 const eventHandlers = {}
@@ -70,7 +70,7 @@ try {
     check(!fs.existsSync(stage1StateFile()), '.stage1-state.json is NOT written by compaction/start')
   }
 
-  console.log('[2] memory_precompact → 新队列：stage1_jobs 入队 + 会话水位写 stage1_meta.sessions')
+  console.log('[2] memory_precompact → 新队列：stage1_jobs 入队，不写废弃 sessions 水位')
   {
     const body = 'precompact key points'
     const r = await ctx.tools.memory_precompact.execute(
@@ -84,22 +84,16 @@ try {
     const job = jobListOf(domain)[key]
     check(!!job, `memory_precompact enqueued a stage-1 job (key=${key})`)
     const meta = metaOf(domain)
-    const rec = meta.sessions && meta.sessions.p1
-    check(!!rec, 'memory_precompact recorded the session in stage1_meta.sessions')
-    check(!!rec && !!rec.lastActivityAt, 'stage1_meta.sessions.p1.lastActivityAt is set')
-    check(!!rec && !!rec.summarizedAt, 'stage1_meta.sessions.p1.summarizedAt is set')
+    check(!meta.sessions, 'memory_precompact does not create retired stage1_meta.sessions')
     check(!fs.existsSync(pipelineStateFile()), '.pipeline-state.json is NOT written by memory_precompact')
     check(!fs.existsSync(stage1StateFile()), '.stage1-state.json is NOT written by memory_precompact')
   }
 
-  console.log('[3] turn/end → 会话活动水位写 stage1_meta.sessions（不再写旧 .pipeline-state.json）')
+  console.log('[3] turn/end → 不写废弃会话水位')
   {
     await eventHandlers['session/event']({ id: 't1', header: { cwd: 'C:/t1' } }, { type: 'turn/end' })
-    // turn/end 的分支 fire-and-forget 写 stage1_meta，稍等一拍再断言。
-    await new Promise((r) => setTimeout(r, 40))
     const meta = metaOf(domain)
-    const rec = meta.sessions && meta.sessions.t1
-    check(!!rec && !!rec.lastActivityAt, 'turn/end recorded activity in stage1_meta.sessions.t1.lastActivityAt')
+    check(!meta.sessions, 'turn/end does not create retired stage1_meta.sessions')
     check(!fs.existsSync(pipelineStateFile()), '.pipeline-state.json is NOT written by turn/end')
   }
 

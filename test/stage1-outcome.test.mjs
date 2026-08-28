@@ -11,7 +11,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { makeCtx, jobListOf, outputListOf } from './lib/helpers.mjs'
 
-const PLUGIN = 'file:///D:/%E8%BD%AF%E4%BB%B6/Deepseek/plugins/dsh-rollout/lib/index.js'
+const PLUGIN = new URL('../lib/index.js', import.meta.url).href
 const { apply } = await import(PLUGIN)
 
 let failed = 0
@@ -74,10 +74,6 @@ async function runScenario({ sessionId, messageText, llmMode }) {
   })
   const config = {
     autoTrigger: 'sessionEnd',
-    minIdleHours: 0,
-    maxDraftAgeDays: 10,
-    maxExtractPerTrigger: 2,
-    maxPipelineRunsPerDay: 100,
     precompactAuto: false,
     extractProvider: '',
     extractModel: '',

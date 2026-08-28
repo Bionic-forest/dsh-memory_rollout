@@ -5,13 +5,14 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
-const PLUGIN = 'file:///D:/%E8%BD%AF%E4%BB%B6/Deepseek/plugins/dsh-rollout/lib/index.js'
+const PLUGIN = new URL('../lib/index.js', import.meta.url).href
 const { apply, validateSourceRef, contentOverlapRatio, normalizeContent } = await import(PLUGIN)
 
 const table = (() => {
   const m = new Map()
   return {
     put: (k, v) => { m.set(k, v); return Promise.resolve() },
+    get: (k) => m.get(k),
     delete: (k) => Promise.resolve(m.delete(k)),
     keys: () => m.keys(),
     entries: () => m.entries(),
@@ -126,7 +127,7 @@ try {
     check(r2.id === r1.id, 'second remember returns the SAME id (no new id)')
     check(r2.merged === true, 'second remember reports merged')
     check(table.size === size0 + 1, 'only one entry created (no duplicate)')
-    check(mem(r1.id).usage_count === 1, 'merged entry usage_count incremented to 1')
+    check(!!mem(r1.id).updatedAt, 'merged entry refreshes updatedAt')
   }
 
   // ── [4] §10.2: remember 显式 supersedes 后旧条目 status=superseded、superseded_by 指向新 id ──
@@ -193,15 +194,14 @@ try {
     check(validateSourceRef({ path: rel, startLine: 1, endLine: 2 }, memoryRoot(), { content: 'quantum flute alchemy' }).ok === false, 'bad: unrelated content rejected')
   }
 
-  // ── [7] 生命周期谓词不影响既有召回排序/使用反馈（回归自检）─────────────────
-  console.log('[7] recall still ranks stale below fresh (weight, not exclusion) + records usage')
+  // ── [7] 生命周期谓词不影响既有召回排序（回归自检）────────────────────────
+  console.log('[7] recall still ranks stale below fresh (weight, not exclusion)')
   {
     seed('life-fresh', { content: 'the fresh lifecycle item is set', tags: ['lc'], updatedAt: stamp(1) })
     seed('life-stale', { content: 'the stale lifecycle item is set', tags: ['lc'], updatedAt: stamp(45) })
     const r = await tools.memory_recall.execute({ query: 'lifecycle', limit: 10 })
     check(r.entries.length === 2, 'both active entries recalled (stale is NOT excluded, just de-weighted)')
     check(r.entries[0].id === 'life-fresh', 'fresh ranks above stale (freshnessWeight down-weights stale)')
-    check(mem('life-fresh').usage_count === 1, 'fresh entry usage recorded on recall')
   }
 } finally {
   try { fs.rmSync(tmp, { recursive: true, force: true }) } catch {}
