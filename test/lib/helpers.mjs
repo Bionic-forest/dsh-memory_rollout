@@ -5,12 +5,33 @@
 // put/get/update/delete/keys/entries/size（update 是唯一真原子读改写：fn 见当前值，
 // 只作用于该记录；key 不存在则 reject）。`entries()` 返回 Map 迭代器。
 //
+// GPT P0-7 强化：
+//   - update 把「冻结的深拷贝」传给 fn，并断言 fn 返回新对象而非原地改传入对象
+//     （原地改会抛 TypeError，抓住「后端写失败但内存已被提前改」的隐患）。
+//   - 支持故障注入：设 `domain._fault = (ctx) => boolean`，任一 put/update 写前若返回
+//     true 则 reject，可模拟「第 N 次写失败/进程退出」的跨 key 半提交。
+//
 // 用法：
 //   const { ctx, domain } = makeCtx({ get: ..., on: (ev,cb)=>{...; return ()=>{} } })
 //   await apply(ctx, {...})
 //   const jobs = jobListOf(domain)          // { key: jobRecord }
 //   const meta = metaOf(domain)             // { runDay, modelAttemptsToday, ... }
 //   await seedJob(domain, 's1', 'wm1', {...}) // 直接往 stage1_jobs 表塞一条作业
+
+const deepFreeze = (o) => {
+  if (o && typeof o === 'object' && !Object.isFrozen(o)) {
+    for (const k of Object.keys(o)) deepFreeze(o[k])
+    Object.freeze(o)
+  }
+  return o
+}
+const clone = (o) => {
+  if (o == null || typeof o !== 'object') return o
+  if (Array.isArray(o)) return o.map(clone)
+  const out = {}
+  for (const k of Object.keys(o)) out[k] = clone(o[k])
+  return out
+}
 
 export function createFakeDomain() {
   const byName = new Map()
@@ -20,6 +41,7 @@ export function createFakeDomain() {
       byName.set(name, {
         map: m,
         put: (k, v) => {
+          if (domain._fault && domain._fault({ table: name, op: 'put', key: k })) return Promise.reject(new Error(`fault-injected put:${name}:${k}`))
           m.set(k, v)
           return Promise.resolve()
         },
@@ -32,7 +54,9 @@ export function createFakeDomain() {
         entries: () => m.entries(),
         update: (k, fn) => {
           if (!m.has(k)) return Promise.reject(new Error(`missing-key: ${k}`))
-          const next = fn(m.get(k))
+          if (domain._fault && domain._fault({ table: name, op: 'update', key: k })) return Promise.reject(new Error(`fault-injected update:${name}:${k}`))
+          // GPT P0-7：传入冻结深拷贝，原地改会抛 TypeError；fn 必须返回新对象。
+          const next = fn(deepFreeze(clone(m.get(k))))
           m.set(k, next)
           return Promise.resolve(next)
         },
@@ -43,7 +67,8 @@ export function createFakeDomain() {
     }
     return byName.get(name)
   }
-  return { byName, table }
+  const domain = { byName, table, _fault: null }
+  return domain
 }
 
 /** 构造默认 ctx；可用 overrides 覆盖 get/tools/systemPrompt/effect/on。返回 { ctx, domain, tools }。 */

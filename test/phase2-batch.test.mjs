@@ -156,10 +156,10 @@ try {
     check(outputByWm('wm2').selected_for_phase2 !== true, 'output NOT consumed after failure')
     check(consolidationCalls === 1, 'one failed consolidation attempt')
     // 让退避到期（把 available_at 拨回过去），验证同一 batch 被复用而不再新建
-    await domain.table('phase2_jobs').update(batchId, (cur) => {
-      cur.available_at = '2020-01-01T00:00:00.000Z'
-      return cur
-    })
+    await domain.table('phase2_jobs').update(batchId, (cur) => ({
+      ...cur,
+      available_at: '2020-01-01T00:00:00.000Z',
+    }))
     llmReturnNull = false
     llmResponse = { memory_summary: 'v1\n## retry ok', registry: '# MEMORY.md\nretry ok' }
     const r2 = await tools['memory__phase2_integrate'].execute({})
@@ -288,10 +288,10 @@ try {
     check(unconsumed.length === 0, 'no unconsumed stage1_output remains (backoff drives retry, not new output)')
     // 拨回退避期，验证调度能再次领取并成功
     const rid = retry[0][0]
-    await domain.table('phase2_jobs').update(rid, (cur) => {
-      cur.available_at = '2020-01-01T00:00:00.000Z'
-      return cur
-    })
+    await domain.table('phase2_jobs').update(rid, (cur) => ({
+      ...cur,
+      available_at: '2020-01-01T00:00:00.000Z',
+    }))
     llmReturnNull = false
     const r2 = await tools['memory__phase2_integrate'].execute({})
     check(r2.ran === true && r2.ok === true, 'retry_wait batch re-claimed and committed after backoff')
