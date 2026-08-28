@@ -113,7 +113,7 @@ Settings → 记忆库 (Memory). Browse summaries, the registry, per-session dra
 The page also has a **Settings** block:
 
 - **Config form** — read/edit the plugin config at runtime (`GET/POST /dsh-rollout/config`). Each editable field shows its current value and a "≠ 默认" marker when it differs from the schema default.
-- **Export** — download the whole `memories/` tree (`memory_summary.md`, `MEMORY.md`, `rollout_summaries/`, `extensions/ad_hoc/notes/`, `.pipeline-state.json`, `.watermark`, …) plus the long-term entries table as a single JSON backup (`GET /dsh-rollout/export`).
+- **Export** — download the whole `memories/` tree (`memory_summary.md`, `MEMORY.md`, `rollout_summaries/`, `extensions/ad_hoc/notes/`, `.watermark`, …) plus the long-term entries table as a single JSON backup (`GET /dsh-rollout/export`).
 - **Import** — restore a backup file. The existing memory root is copied to `<ds_home>/memories-backup-<timestamp>` first, then the bundle is unpacked into `memories/` and the entries table is restored. Import is intentionally replace-semantics: it backs up first, then imports (`POST /dsh-rollout/import`).
 
 ## Development

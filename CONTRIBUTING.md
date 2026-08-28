@@ -42,8 +42,7 @@ Layered disclosure, general → specific:
 ├── MEMORY.md                 # searchable registry (by task group)
 ├── rollout_summaries/<sessionId>.md   # ONE DRAFT PER SESSION
 ├── extensions/ad_hoc/notes/  # user-requested temporary notes
-├── .watermark                # idempotency watermark (no-op when unchanged)
-└── .pipeline-state.json      # pipeline job state (per-session + global budget)
+└── .watermark                # idempotency watermark (no-op when unchanged)
 ```
 
 Key invariants to preserve when you edit:
@@ -90,7 +89,7 @@ Then confirm the SHA of the three synced copies match (see the sync note below).
 | Change the injected memory guidance | `lib/index.js` — `ctx.systemPrompt.section` (decision boundary / quick pass) |
 | Change the extraction prompt | `lib/index.js` — `EXTRACT_SYSTEM_PROMPT` |
 | Change memory layout / files | `lib/index.js` — `ensureLayout` / `dirs()` / `writeSessionDraft` |
-| Tune the automatic pipeline | `lib/index.js` — `pipelinePhase1` / `pipelinePhase2` / `runPipeline` + the `Config` throttle fields |
+| Tune the automatic pipeline | `lib/index.js` — `enqueueStage1JobIntoTable` / `drainStage1Jobs` / `phase2Integrate` + the `Config` throttle fields |
 | Change the settings page UI | `lib/client.js` |
 
 ## Sync note (IMPORTANT)

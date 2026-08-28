@@ -104,7 +104,6 @@ memory_precompact(content="要留的关键要点")           # → 压缩前防�
 │   └── <sessionId>.md
 ├── extensions/ad_hoc/notes/  # 用户要求的临时 note
 ├── .watermark                # 幂等水印
-└── .pipeline-state.json      # 管线状态（会话活动/每日预算）
 ```
 
 > ⚠️ **`memories/` 目录在你本机 `<ds_home>` 下，与插件代码分开**——卸载插件不会删你的记忆；但请记得**定期用设置页「导出记忆」备份**（你的记忆是本机数据，不进仓库）。
@@ -116,7 +115,7 @@ memory_precompact(content="要留的关键要点")           # → 压缩前防�
 页面还有一块「**设置**」：
 
 - **配置表单** — 运行时读取/编辑插件配置（`GET/POST /dsh-rollout/config`）。每个可编辑字段显示当前值，偏离默认时标「≠ 默认」，悬浮 `?` 看解释。
-- **导出记忆** — 把整个 `memories/` 树（`memory_summary.md`、`MEMORY.md`、`rollout_summaries/`、`notes/`、`.pipeline-state.json`、`.watermark` 等）连同长期条目表一并打包成单个 JSON 备份下载（`GET /dsh-rollout/export`）。
+- **导出记忆** — 把整个 `memories/` 树（`memory_summary.md`、`MEMORY.md`、`rollout_summaries/`、`notes/`、`.watermark` 等）连同长期条目表一并打包成单个 JSON 备份下载（`GET /dsh-rollout/export`）。
 - **导入记忆** — 恢复备份文件。先把现有记忆根复制到 `<ds_home>/memories-backup-<时间戳>`，再把备份解包进 `memories/` 并恢复条目表。导入是「替换」语义：先备份再导入（`POST /dsh-rollout/import`）。
 
 ## 开发
