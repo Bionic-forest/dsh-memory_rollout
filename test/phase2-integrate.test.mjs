@@ -123,19 +123,35 @@ try {
     check(llmCalls === 1, 'exactly 1 LLM call (attempt still counted)')
   }
 
-  console.log('[4] 发布第二个文件失败：原子提交 → 旧版保留 + 水印未推进 + phase2_last_error（M2）')
+  console.log('[4] 发布第二个文件失败：版本目录隔离 → 旧版保留 + 水印未推进 + phase2_last_error（P0-7/M2 迁移）')
   {
-    const oldSummary = readSummary()
+    const oldSummary = readSummary() // 前一用例发布的版本（test[3] 未改，故=test[2] NEW_SUMMARY）
     const oldRegistry = readRegistry()
     await seedState(
       { 'j-3': { source_watermark: 'wm4', session_id: 's3', rollout_summary: 'new2', generated_at: '2026-01-04T00:00:00.000Z' } },
       { lastSuccessWatermark: 'wm3', lastPhase2At: '' },
     )
+    // 预置一个 pending 批 b-test4（input_ids 指向 wm4/j-3），并预先把其版本目录的 MEMORY.md.tmp
+    // 变成目录，使版本化发布的第二个文件必然 EISDIR 失败 → 不切换 current.json，旧版完整保留。
+    const batchId = 'b-test4'
+    await domain.table('phase2_jobs').put(batchId, {
+      id: batchId,
+      status: 'pending',
+      input_ids: ['j-3'],
+      lease_owner: '',
+      lease_expires_at: '',
+      attempt_count: 0,
+      max_attempts: 3,
+      available_at: new Date().toISOString(),
+      staging_version: '',
+      last_error: '',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    })
+    const rTmpDir = path.join(root(), 'versions', batchId, 'MEMORY.md.tmp')
+    fs.mkdirSync(rTmpDir, { recursive: true })
     llmResponse = { memory_summary: 'v1\n## atomic new', registry: '# MEMORY.md\natomic new' }
     llmCalls = 0
-    // 注入：把 MEMORY.md.tmp 变成一个目录，使原子发布的第二个文件写出必然 EISDIR 失败。
-    const rTmpDir = registryFile() + '.tmp'
-    fs.mkdirSync(rTmpDir, { recursive: true })
     let r
     try {
       r = await tools['memory__phase2_integrate'].execute({})
