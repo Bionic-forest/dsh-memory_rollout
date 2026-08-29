@@ -68,14 +68,18 @@ try {
   const r1e = await ctx.tools['memory_recall'].execute({ query: '轻量证据索引 召回' })
   check((r1e.memories || []).some((m) => /draft-imp\.md:\d+-\d+/.test(m.citation)), '更相关的 draft-imp（命中2词）进入返回（M1-R4）')
 
-  // ── ①f M1-R2：生命周期精确匹配——旧原句不复活、新否定/修正可召回（forgotten + superseded） ──
-  console.log('[①f] M1-R2：旧原句不复活 + 新否定可召回（forgotten/superseded 组合）')
+  // ── ①f M1-R2/R3：生命周期精确匹配——旧原句不复活、新否定可召回（forgotten + superseded；含真实注册表后缀） ──
+  console.log('[①f] M1-R2/R3：旧原句（含 writeRegistry 固定后缀）不复活 + 新否定可召回')
   const mkEntry = (id, content, status) => domain.table('entries').put(id, { id, content, tags: [], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), source: 'tool', status, superseded_by: '' })
   for (const status of ['forgotten', 'superseded']) {
     await mkEntry('e-proxy-' + status, '允许使用代理', status)
+    // 草稿：旧原句（line2）+ 新否定（line3）
     fs.writeFileSync(path.join(mr, 'rollout_summaries', 'proxy-' + status + '.md'), '# 会话\n- 允许使用代理\n- 最新决定：不允许使用代理\n')
-    const r = await ctx.tools['memory_recall'].execute({ query: '允许使用代理' })
-    check(!(r.memories || []).some((m) => m.content && m.content.trim() === '允许使用代理'), `${status}：旧原句「允许使用代理」不复活（用例A）`)
+    // 真实 MEMORY.md 注册表固定后缀行（writeRegistry 格式）：`- [pref] 允许使用代理 (session=…, updated=…)`
+    fs.appendFileSync(path.join(mr, 'MEMORY.md'), `\n- [pref] 允许使用代理 (session=s1, updated=2026-08-29T00:00:00.000Z)\n- [pref] 最新决定：不允许使用代理 (session=s2, updated=2026-08-29T00:00:00.000Z)\n`)
+    // query '代理' 同时命中旧/新
+    const r = await ctx.tools['memory_recall'].execute({ query: '代理' })
+    check(!(r.memories || []).some((m) => m.content && m.content.includes('允许使用代理') && !m.content.includes('不允许使用代理')), `${status}：旧原句「允许使用代理」不复活（草稿 + 注册表后缀行，用例A）`)
     check((r.memories || []).some((m) => m.content && m.content.includes('不允许使用代理')), `${status}：新否定「不允许使用代理」可召回（用例B，不被墓碑压掉）`)
     await domain.table('entries').delete('e-proxy-' + status)
   }
