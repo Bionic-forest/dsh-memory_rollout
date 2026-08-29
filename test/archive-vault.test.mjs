@@ -110,6 +110,25 @@ try {
   // 这里验证 seen-index 语义：enqueue 对已归档的同内容返回 queued:false（seen 命中）
   const enqKey = 's1::wm1'
   check(domain.table('stage1_seen').get(enqKey) !== undefined && domain.table('stage1_jobs').get(enqKey) === undefined, 'job 已归档但 seen-index 保留（去重基线）')
+
+  // ── ④ restore：归档后恢复回活跃表（冲突不覆盖） ──
+  console.log('[④] restore：dry-run 统计 + 实际恢复（目标键已存在则不覆盖）')
+  const rest1 = await ctx.tools['memory__restore_vault'].execute({ dryRun: true })
+  check(rest1.dryRun === true, 'restore dryRun=true')
+  check(rest1.candidates.stage1_outputs === 1 && rest1.candidates.phase2_jobs === 2 && rest1.candidates.stage1_jobs === 2 && rest1.candidates.changes === 2 && rest1.candidates.versions === 1, 'restore 候选统计正确（outputs1/phase2 2/jobs2/changes2/versions1）')
+  check(rest1.restored === 0 && rest1.restoredVersions === 0, 'restore dry-run 不动作')
+  const rest2 = await ctx.tools['memory__restore_vault'].execute({ dryRun: false })
+  check(rest2.restored === 1 + 2 + 2 + 2, '恢复 7 条记录（outputs1+phase2/jobs/products/changes）')
+  check(!!domain.table('stage1_outputs').get('j-ok'), 'output j-ok 已恢复回活跃表')
+  check(!!domain.table('phase2_jobs').get('p2-c') && !!domain.table('phase2_jobs').get('p2-f'), 'phase2 p2-c/p2-f 已恢复回活跃表')
+  check(!!domain.table('stage1_jobs').get('s1::wm1'), 'job s1::wm1 已恢复回活跃表')
+  check(!!domain.table('memory_changes').get('ch-c1') && !!domain.table('memory_changes').get('ch-c2'), 'changes 已恢复回活跃表')
+  check(domain.table('phase2_jobs_archive').size === 0 && domain.table('changes_archive').size === 0, '归档表已清空（恢复后）')
+  check(fs.existsSync(path.join(tmp, 'memories', 'versions', 'v1')) && !fs.existsSync(path.join(tmp, 'memories', 'versions-archive', 'v1')), 'v1 目录恢复回 versions/')
+  check(domain.table('publish_versions').get('v1').archived !== true, 'publish_versions v1 archived 已清除')
+  // 幂等/冲突：再恢复一次（活跃表已有这些 key）→ 不覆盖、不重复
+  const rest3 = await ctx.tools['memory__restore_vault'].execute({ dryRun: false })
+  check(rest3.restored === 0, '再次恢复 0 条（目标已存在，冲突不覆盖）')
 } finally {
   try { fs.rmSync(tmp, { recursive: true, force: true }) } catch {}
 }
