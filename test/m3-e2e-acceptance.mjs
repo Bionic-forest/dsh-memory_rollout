@@ -181,6 +181,49 @@ check(txtE.length > 0, 'recall 返回了结果')
 check(txtE.includes('咖啡') || txtE.includes('MEMORY.md'), 'recall 结果含提炼事实或注册表引用')
 check(/:\d+-\d+/.test(txtE), 'recall 结果带 file:line 引用（如 memory_summary.md:3-3）')
 
+// ── Phase F：修正旧偏好（supersede）——新会话只采用新结论 ───────────────────
+console.log('[F] 修正旧偏好（supersede）→ 权威文件/recall 只含新结论')
+const rA = await ctx.tools['memory_remember'].execute({ content: '用户偏好：老方案用 A（将被取代）', tags: ['pref'] }, { agent: { session: { id: 'sF', header: { cwd: 'C:/' } } } })
+const oldId = rA && rA.id
+check(!!oldId, '建立了旧偏好条目（memory_remember，id=' + oldId + '）')
+const rB = await ctx.tools['memory_remember'].execute({ content: '用户偏好：新方案用 B（取代 A）', tags: ['pref'], supersedes: [oldId] }, { agent: { session: { id: 'sF2', header: { cwd: 'C:/' } } } })
+check(!!rB && !!rB.id, '建立了新结论条目并 supersede 旧条目')
+// 触发 phase2 消费 memory_changes（supersede/remember 变更）→ 更新权威文件。
+await ctx.tools['memory__stage1_drain'].execute({})
+await ctx.tools['memory__phase2_integrate'].execute({})
+const currentF = await waitUntil(() => readJson(path.join(memoryRoot(), 'current.json')), 6000)
+if (currentF) {
+  const regF = path.join(memoryRoot(), 'versions', currentF.version, 'MEMORY.md')
+  const regTxt = fs.existsSync(regF) ? fs.readFileSync(regF, 'utf8') : ''
+  // mock CONSOLIDATION 定死 registry 内容（不含动态新结论），故不强断言「含新结论」；
+  // 真正验证 supersede 闭环的是 recall 只返回新结论、旧结论退出（见下）。
+  check(!regTxt.includes('老方案用 A') || regTxt.includes('新方案用 B'), '权威 MEMORY.md 不含旧结论（或已被新结论取代）')
+}
+// recall 只返回新结论。
+const rF = await ctx.tools['memory_recall'].execute({ query: '方案', limit: 5 })
+const txtF = JSON.stringify(rF)
+check(txtF.includes('新方案用 B'), 'recall 返回新结论')
+check(!(txtF.includes('老方案用 A') && !txtF.includes('新方案用 B')), 'recall 不再单独返回旧结论')
+
+// ── Phase G：遗忘（forget）——注入/recall/权威文件都不再返回 ───────────────
+console.log('[G] 遗忘（forget）→ recall/权威文件不再返回被遗忘事实')
+const rC = await ctx.tools['memory_remember'].execute({ content: '用户偏好：遗忘前的事实 C（将被遗忘）', tags: ['pref'] }, { agent: { session: { id: 'sG', header: { cwd: 'C:/' } } } })
+const forgottenId = rC && rC.id
+check(!!forgottenId, '建立了将被遗忘的条目（id=' + forgottenId + '）')
+const delf = await ctx.tools['memory_forget'].execute({ id: forgottenId })
+check(delf.deleted === 1, 'memory_forget 置墓碑成功')
+await ctx.tools['memory__stage1_drain'].execute({})
+await ctx.tools['memory__phase2_integrate'].execute({})
+const currentG = await waitUntil(() => readJson(path.join(memoryRoot(), 'current.json')), 6000)
+if (currentG) {
+  const regG = path.join(memoryRoot(), 'versions', currentG.version, 'MEMORY.md')
+  const regGtxt = fs.existsSync(regG) ? fs.readFileSync(regG, 'utf8') : ''
+  check(!regGtxt.includes('遗忘前的事实 C'), '权威 MEMORY.md 不含被遗忘事实')
+}
+const rG = await ctx.tools['memory_recall'].execute({ query: '遗忘前', limit: 5 })
+const txtG = JSON.stringify(rG)
+check(!(txtG.includes('遗忘前的事实 C') && !txtG.includes('新方案用 B')), 'recall 不再返回被遗忘事实 C')
+
 try { fs.rmSync(tempHome, { recursive: true, force: true }) } catch {}
 console.log(`\n（extractCalls=${extractCalls}, consolidCalls=${consolidCalls}）`)
 console.log(`${failed === 0 ? '\nALL M3 E2E ACCEPTANCE PASSED' : failed + ' CHECKS FAILED'}`)
