@@ -96,9 +96,12 @@ const readSession = async (id) => {
 }
 
 const handlers = {}
+// fake webServer：register 捕获 route，供 M3 管理页 handler 验证用。
+const registeredRoutes = []
+const fakeWebServer = { register: (route) => { registeredRoutes.push(route); return () => {} } }
 const ctx = {
   storageDomain: { open: realOpen },
-  get: (k) => (k === 'llm' ? llmMock : k === 'agentDefaultModel' ? { currentSelection: () => ({ provider: 'p', model: 'm' }) } : k === 'sessionQuery' ? { readSession } : undefined),
+  get: (k) => (k === 'llm' ? llmMock : k === 'agentDefaultModel' ? { currentSelection: () => ({ provider: 'p', model: 'm' }) } : k === 'sessionQuery' ? { readSession } : k === 'webServer' ? fakeWebServer : undefined),
   tools: { register(t) { if (t && t.name) this[t.name] = t } },
   systemPrompt: { section: () => {} },
   effect: (fn) => fn(),
@@ -136,6 +139,29 @@ if (current) {
   const regPath = path.join(memoryRoot(), 'versions', current.version, 'MEMORY.md')
   check(!!fs.existsSync(regPath), '发布版本 MEMORY.md 已写出')
   // Phase 2 整合可能 no-change 跳过整合模型（预期），consolidCalls 至少 0；不强断言。
+}
+
+// ── Phase A2：M3 管理页 /dsh-rollout/overview 返回 status 字段（真实 handler）──
+console.log('[A2] /dsh-rollout/overview 返回 status 字段（M3 管理页“至少回答”6 项）')
+{
+  const overview = registeredRoutes.find((r) => r.path === '/dsh-rollout/overview')
+  check(!!overview, '捕获到 /dsh-rollout/overview 路由')
+  let body = null
+  const res = {
+    statusCode: 0,
+    setHeader() {},
+    end(payload) { body = typeof payload === 'string' ? JSON.parse(payload) : payload },
+  }
+  await overview.handler({ method: 'GET' }, res)
+  const st = body && body.status
+  check(!!st, 'overview 返回 status 字段')
+  check(typeof st.memoriesEnabled === 'boolean', 'status.memoriesEnabled 存在')
+  check(typeof st.generationEnabled === 'boolean', 'status.generationEnabled 存在')
+  check(typeof st.version === 'string' && st.version.length > 0, 'status.version 指向发布版本：' + st.version)
+  check(st.counts && typeof st.counts === 'object', 'status.counts 存在')
+  check(st.provenance && typeof st.provenance === 'object', 'status.provenance（来源分布）存在')
+  check(st.recent && typeof st.recent === 'object', 'status.recent（最近成功/失败）存在')
+  check(st.model && typeof st.model === 'object', 'status.model（使用模型）存在')
 }
 
 // ── Phase B：外部工具(web_search)会话 → 整段跳过 ────────────────────────────
