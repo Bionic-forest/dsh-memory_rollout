@@ -68,6 +68,18 @@ try {
   const r1e = await ctx.tools['memory_recall'].execute({ query: '轻量证据索引 召回' })
   check((r1e.memories || []).some((m) => /draft-imp\.md:\d+-\d+/.test(m.citation)), '更相关的 draft-imp（命中2词）进入返回（M1-R4）')
 
+  // ── ①f M1-R2：生命周期精确匹配——旧原句不复活、新否定/修正可召回（forgotten + superseded） ──
+  console.log('[①f] M1-R2：旧原句不复活 + 新否定可召回（forgotten/superseded 组合）')
+  const mkEntry = (id, content, status) => domain.table('entries').put(id, { id, content, tags: [], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), source: 'tool', status, superseded_by: '' })
+  for (const status of ['forgotten', 'superseded']) {
+    await mkEntry('e-proxy-' + status, '允许使用代理', status)
+    fs.writeFileSync(path.join(mr, 'rollout_summaries', 'proxy-' + status + '.md'), '# 会话\n- 允许使用代理\n- 最新决定：不允许使用代理\n')
+    const r = await ctx.tools['memory_recall'].execute({ query: '允许使用代理' })
+    check(!(r.memories || []).some((m) => m.content && m.content.trim() === '允许使用代理'), `${status}：旧原句「允许使用代理」不复活（用例A）`)
+    check((r.memories || []).some((m) => m.content && m.content.includes('不允许使用代理')), `${status}：新否定「不允许使用代理」可召回（用例B，不被墓碑压掉）`)
+    await domain.table('entries').delete('e-proxy-' + status)
+  }
+
   // ── ② useMemories=false → recall 为空、不注入 ──
   console.log('[②] useMemories=false → recall 空、注入为 ""')
   // 用第二个隔离 home，apply 时 useMemories:false，验证运行时开关。
