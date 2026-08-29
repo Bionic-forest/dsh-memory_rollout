@@ -1,7 +1,9 @@
 // 第三轮返工第 5 步（R7 / P1-3 / §11.4⑥）：迁移 compaction/precompact 到新持久管线并退役旧管线。
+// M2 更新：compaction/start 是「活跃会话」的上下文压缩事件（非会话结束/闲置边界），
+// 因此**不再作为自动持久记忆入口**（退役自动 Phase 1 入队，满足「活跃会话不持久」）。
+// 显式 memory_precompact 工具仍入队（用户主动 checkpoint）。
 // 验证（行为层）：
-//   ① compaction/start（precompactAuto 开）→ 走新队列：stage1_jobs 入队（该会话作 Stage1 作业）
-//      + scheduleStage1Drain 消费；旧 .pipeline-state.json 不写（不存在）。
+//   ① compaction/start → 不再自动入队 stage1_jobs；旧 .pipeline-state.json / .stage1-state.json 不写。
 //   ② memory_precompact → 走新队列：stage1_jobs 入队，不再写无消费者的 stage1_meta.sessions；
 //      旧 .pipeline-state.json / 旧 .stage1-state.json 均不存在。
 //   ③ turn/end 不再做活动水位持久写；新队列以 session+content watermark 判断新活动。
@@ -49,23 +51,13 @@ try {
   assert.ok(eventHandlers['session/event'], 'session/event handler registered')
   assert.ok(ctx.tools['memory_precompact'], 'memory_precompact tool registered')
 
-  console.log('[1] compaction/start → 新队列：stage1_jobs 入队 + drain 消费，旧 .pipeline-state.json 不写')
+  console.log('[1] compaction/start → M2：不再自动入队（活跃会话不持久）；旧管线文件不写')
   {
     const sess = { id: 'c1', header: { cwd: 'C:/c1' }, deriveMessages: () => [] }
-    const wm = contentWatermark('')
     await eventHandlers['session/event'](sess, { type: 'compaction/start' })
-    const key = `c1::${wm}`
-    let job = jobListOf(domain)[key]
-    check(!!job, `compaction/start enqueued a stage-1 job (key=${key})`)
-    check(job && job.session_id === 'c1', 'the stage-1 job belongs to the compacted session c1')
-    // drain 消费（status 非 pending）证明 scheduleStage1Drain 已调度。
-    if (job) {
-      const drained = await waitUntil(() => {
-        const j = jobListOf(domain)[key]
-        return j && j.status !== 'pending'
-      }, 3000)
-      check(drained, 'the compaction job was drained to a terminal status (scheduleStage1Drain ran)')
-    }
+    const jobs = jobListOf(domain)
+    const c1Jobs = Object.values(jobs).filter((x) => x && String(x.session_id) === 'c1')
+    check(c1Jobs.length === 0, 'compaction/start does NOT auto-enqueue a stage-1 job (active-session, not persisted)')
     check(!fs.existsSync(pipelineStateFile()), '.pipeline-state.json is NOT written by compaction/start')
     check(!fs.existsSync(stage1StateFile()), '.stage1-state.json is NOT written by compaction/start')
   }

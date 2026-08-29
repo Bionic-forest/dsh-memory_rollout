@@ -69,9 +69,9 @@ memory_precompact(content="要留的关键要点")           # → 压缩前防�
 | `summaryTokens` | int | 4000 | 注入的 `memory_summary.md` 最大 token 数，越大注入越多但更占上下文 |
 | `maxQuickSteps` | int | 5 | 快速记忆通道的搜索步数预算（≤12） |
 | `memoryRoot` | string | `''` | 可选覆盖记忆根目录；空 = `<ds_home>/memories` |
-| `autoTrigger` | `'sessionEnd'` \| `'off'` | `'sessionEnd'` | 自动触发：`sessionEnd` 会话结束时跑管线；`off` 关闭（手动工具仍可用） |
+| `generateMemories` | boolean | `true` | M2：是否让会话贡献未来记忆（自动 Phase 1）。false = 会话结束时不自动入队提炼（手动 `memory_precompact` / `memory_remember` 仍可用）。与 `useMemories` 独立。 |
+| `useMemories` | boolean | `true` | 是否向模型提供记忆（注入 + recall）。false = 不注入、不召回（生成可独立开关） |
 | `maxModelAttemptsPerDay` | number | 24 | 每日 Stage 1 模型尝试上限（失败尝试也计数） |
-| `precompactAuto` | boolean | `false` | true 时也在 `compaction/start` 跑前置整理（防压缩丢信息） |
 | `extractProvider` | string | `''` | LLM 提炼所用的 Provider 路由；空 = harness 默认 |
 | `extractModel` | string | `''` | LLM 提炼所用的模型 id；空 = harness 默认 |
 | `extractReasoningEffort` | string | `'low'` | 提炼的推理强度（adapter 词汇；若模型拒绝会自动去掉重试） |

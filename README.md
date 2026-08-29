@@ -67,9 +67,9 @@ The plugin exposes a schemastery config schema. The full parameter table:
 | `summaryTokens` | int | 4000 | Approximate token budget for injected `memory_summary.md` |
 | `maxQuickSteps` | int | 5 | Quick memory pass search-step budget |
 | `memoryRoot` | string | `''` | Optional override of the memory root; empty = `<ds_home>/memories` |
-| `autoTrigger` | `'sessionEnd'` \| `'off'` | `'sessionEnd'` | Auto-trigger mode: `sessionEnd` runs the pipeline on session dispose, `off` disables it (manual tools still work) |
+| `generateMemories` | boolean | `true` | M2: whether a session contributes future memory (auto Phase 1). false = no auto Stage 1 job on dispose (manual `memory_precompact` / `memory_remember` still work). Independent from `useMemories`. |
+| `useMemories` | boolean | `true` | Whether to provide memory to the model (inject + recall). false = no inject/recall (generation can be toggled independently) |
 | `maxModelAttemptsPerDay` | number | 24 | Daily Stage 1 model-attempt cap; failed attempts count |
-| `precompactAuto` | boolean | `false` | Also drain on `compaction/start` when true |
 | `extractProvider` | string | `''` | Provider route for LLM extraction; empty = harness default |
 | `extractModel` | string | `''` | Provider model id for extraction; empty = harness default |
 | `extractReasoningEffort` | string | `'low'` | Reasoning effort for extraction (adapter vocab) |
