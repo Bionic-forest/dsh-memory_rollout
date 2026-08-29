@@ -76,11 +76,16 @@ try {
   check(startedA, 'run A got in-flight (holding at the LLM gate)')
 
   // 2) Fire B while A is running -> must be persisted (enqueued), not dropped.
+  //    M3-阻断修复：dispose 通过持久正文算水印（方案 A），引入一次异步持久读取，
+  //    因此 B 入队是「很快但非同步」。用 waitUntil 等 B 入队，验证「不丢」的核心性质。
   eventHandlers['session/disposed'](session('b'))
 
-  // 3) While A is in-flight, B must already be persisted as a stage-1 job (not dropped).
-  const jobsWhileAInFlight = readState().jobs || {}
-  check(Object.keys(jobsWhileAInFlight).some((k) => k.startsWith('b::')), 'B is persisted (enqueued) while A is in-flight — not dropped')
+  // 3) While A is in-flight, B must eventually be persisted as a stage-1 job (not dropped).
+  const bPersisted = await waitUntil(() => {
+    const jobs = readState().jobs || {}
+    return Object.keys(jobs).some((k) => k.startsWith('b::'))
+  }, 2000)
+  check(bPersisted, 'B is persisted (enqueued) while A is in-flight — not dropped')
 
   // 4) Release the gate; A completes and B is eventually drained too.
   release()
