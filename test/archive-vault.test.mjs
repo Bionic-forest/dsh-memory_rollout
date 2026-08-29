@@ -5,12 +5,13 @@
 //   ③ 归档后：seen-index 保证同内容再 dispose 仍去重；sourceRef 查归档表仍可核验；
 //      reconcile 承认归档批次（不解绑其 input）；候选减少。
 import assert from 'node:assert'
+import crypto from 'node:crypto'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { makeCtx, seedOutput, seedJob } from './lib/helpers.mjs'
 
-const PLUGIN = 'file:///D:/%E8%BD%AF%E4%BB%B6/Deepseek/plugins/dsh-rollout/lib/index.js'
+const PLUGIN = new URL('../lib/index.js', import.meta.url).href
 const { apply } = await import(PLUGIN)
 
 const { ctx, domain } = makeCtx({ get: () => undefined })
@@ -43,10 +44,19 @@ try {
   await put('memory_changes', 'ch-c1', { id: 'ch-c1', kind: 'remember', payload: { content: 'x' }, source_ref: '', status: 'consumed', phase2_batch_id: 'p2-c', priority: 10, created_at: nowIso(), updated_at: nowIso() })
   await put('memory_changes', 'ch-c2', { id: 'ch-c2', kind: 'forget', payload: { entryId: 'e' }, source_ref: '', status: 'consumed', phase2_batch_id: 'p2-c', priority: 100, created_at: nowIso(), updated_at: nowIso() })
   await put('memory_changes', 'ch-p', { id: 'ch-p', kind: 'note', payload: { content: 'y' }, source_ref: '', status: 'pending', phase2_batch_id: '', priority: 10, created_at: nowIso(), updated_at: nowIso() })
-  // publish_versions：v4(current) + v3/v2/v1 均 published
+  // publish_versions：v4(current) + v3/v2/v1 均 published 且**可用**（valid manifest+files+sha）
+  const sha256 = (s) => crypto.createHash('sha256').update(String(s || '')).digest('hex')
+  const mkVersion = (v, ago) => {
+    const vd = path.join(tmp, 'memories', 'versions', v)
+    fs.mkdirSync(vd, { recursive: true })
+    const s = `summary-${v}`, r = `registry-${v}`
+    fs.writeFileSync(path.join(vd, 'memory_summary.md'), s)
+    fs.writeFileSync(path.join(vd, 'MEMORY.md'), r)
+    fs.writeFileSync(path.join(vd, 'manifest.json'), JSON.stringify({ version: v, summary_sha256: sha256(s), registry_sha256: sha256(r) }))
+    return { id: v, summary_file: `versions/${v}/memory_summary.md`, registry_file: `versions/${v}/MEMORY.md`, manifest_file: `versions/${v}/manifest.json`, status: 'published', created_at: new Date(Date.now() - ago).toISOString() }
+  }
   for (const [v, ago] of [['v4', 1000], ['v3', 2000], ['v2', 3000], ['v1', 4000]]) {
-    await put('publish_versions', v, { id: v, summary_file: `versions/${v}/memory_summary.md`, registry_file: `versions/${v}/MEMORY.md`, manifest_file: `versions/${v}/manifest.json`, status: 'published', created_at: new Date(Date.now() - ago).toISOString() })
-    fs.mkdirSync(path.join(tmp, 'memories', 'versions', v), { recursive: true })
+    await put('publish_versions', v, mkVersion(v, ago))
   }
   fs.writeFileSync(path.join(tmp, 'memories', 'current.json'), JSON.stringify({ version: 'v4' }))
 
