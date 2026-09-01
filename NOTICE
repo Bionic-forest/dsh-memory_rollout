@@ -15,6 +15,8 @@ project is preserved as required by Apache 2.0.
 Related / derived-from sources:
 - openai/codex (Apache License 2.0) — memory model + extraction prompt design
 - flymysql/dsh-memory (MIT) — the original npm package this plugin was adapted
-  from (the older "cross-session memory vault" behavior and storage-domain shape)
+  from (the older "cross-session memory vault" behavior and storage-domain shape).
+  Its upstream notice, retained per MIT: **Copyright (c) 2026 dsh-memory contributors**
+  (see also LICENSE, where this copyright is preserved alongside the plugin's own).
 
 See README.md for usage and LICENSE for this plugin's own MIT terms.
