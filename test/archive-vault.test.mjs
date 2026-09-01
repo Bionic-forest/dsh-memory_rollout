@@ -15,7 +15,7 @@ const PLUGIN = new URL('../lib/index.js', import.meta.url).href
 const { apply } = await import(PLUGIN)
 
 const { ctx, domain } = makeCtx({ get: () => undefined })
-const tmp = path.join(os.tmpdir(), 'dsh-memory-rollout-archive-' + Date.now())
+const tmp = path.join(os.tmpdir(), 'dsh-memory_rollout-archive-' + Date.now())
 process.env.DSH_HOME = tmp
 fs.mkdirSync(tmp, { recursive: true })
 

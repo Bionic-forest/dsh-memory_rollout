@@ -1,5 +1,5 @@
 // One-off isolated test for the rewritten importBundle (P0-1 + P0-2).
-// Mocks the minimal DSH host surface and drives /dsh-memory-rollout/import through the
+// Mocks the minimal DSH host surface and drives /dsh-memory_rollout/import through the
 // plugin's own apply() so we exercise the real closure logic.
 import assert from 'node:assert'
 import fs from 'node:fs'
@@ -64,7 +64,7 @@ const ctx = {
   on: () => () => {},
 }
 
-// ── drive /dsh-memory-rollout/import ────────────────────────────────────────────────
+// ── drive /dsh-memory_rollout/import ────────────────────────────────────────────────
 class FakeReq {
   constructor(method = 'POST') {
     this.method = method
@@ -82,8 +82,8 @@ async function callImport(rawText) {
   const req = new FakeReq('POST')
   const res = { statusCode: 0, headers: {}, setHeader(k, v) { this.headers[k] = v }, body: '' }
   res.end = (b) => { res.body = b }
-  const handler = routes['/dsh-memory-rollout/import'] && routes['/dsh-memory-rollout/import'].handler
-  assert.ok(handler, '/dsh-memory-rollout/import route must be registered')
+  const handler = routes['/dsh-memory_rollout/import'] && routes['/dsh-memory_rollout/import'].handler
+  assert.ok(handler, '/dsh-memory_rollout/import route must be registered')
   const p = handler(req, res)
   req.emit('data', rawText)
   req.emit('end')
@@ -112,7 +112,7 @@ function hasEntry(content) {
   return content === undefined ? out : out.includes(content)
 }
 
-const tmpHome = path.join(os.tmpdir(), 'dsh-memory-rollout-p0-test-' + Date.now())
+const tmpHome = path.join(os.tmpdir(), 'dsh-memory_rollout-p0-test-' + Date.now())
 process.env.DSH_HOME = tmpHome
 fs.mkdirSync(tmpHome, { recursive: true })
 
@@ -149,7 +149,7 @@ try {
   // ── TEST A: valid bundle replaces old tree + restores table ────────────────
   console.log('\n[Test A] success: replace old tree + restore entries table')
   const bundleA = {
-    format: 'dsh-memory-rollout-memory-backup',
+    format: 'dsh-memory_rollout-memory-backup',
     version: 1,
     exportedAt: new Date().toISOString(),
     fileCount: 1,
@@ -184,12 +184,12 @@ try {
   check(rb.status === 400 && /not valid JSON/.test(rb.body.error), 'malformed JSON rejected')
 
   rb = await callImport(JSON.stringify({ format: 'something-else', files: [] }))
-  check(rb.status === 400 && /not a dsh-memory-rollout/.test(rb.body.error), 'wrong format rejected')
+  check(rb.status === 400 && /not a dsh-memory_rollout/.test(rb.body.error), 'wrong format rejected')
 
-  rb = await callImport(JSON.stringify({ format: 'dsh-memory-rollout-memory-backup', files: [{ path: '../../evil.md', content: b64('x') }] }))
+  rb = await callImport(JSON.stringify({ format: 'dsh-memory_rollout-memory-backup', files: [{ path: '../../evil.md', content: b64('x') }] }))
   check(rb.status === 400 && /traversal/i.test(rb.body.error), 'path traversal rejected')
 
-  rb = await callImport(JSON.stringify({ format: 'dsh-memory-rollout-memory-backup', files: [], entries: [{ content: '' }] }))
+  rb = await callImport(JSON.stringify({ format: 'dsh-memory_rollout-memory-backup', files: [], entries: [{ content: '' }] }))
   check(rb.status === 400 && /entry missing non-empty content/.test(rb.body.error), 'empty entry rejected')
 
   check(JSON.stringify(listSummaries()) === JSON.stringify(snapshotFiles), 'files unchanged after invalid imports')
@@ -212,7 +212,7 @@ try {
 
   table._failNextPut = true // the switch's first table.put throws
   const bundleC = {
-    format: 'dsh-memory-rollout-memory-backup',
+    format: 'dsh-memory_rollout-memory-backup',
     version: 1,
     files: [{ path: 'rollout_summaries/fromC.md', content: b64('should be rolled back') }],
     entries: [{ id: 'c-entry', content: 'new c entry', createdAt: '2026-03-01T00:00:00.000Z', updatedAt: '2026-03-01T00:00:00.000Z' }],

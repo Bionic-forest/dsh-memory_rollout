@@ -1,5 +1,5 @@
 // GPT P0-1 回归：Phase 2 全局单飞——两个批次不能基于同一旧版本并行归并丢更新。
-// 对应《返工后第四轮复核》§4 反例（dsh-memory-rollout-phase2-concurrency-counterexample.mjs）。
+// 对应《返工后第四轮复核》§4 反例（dsh-memory_rollout-phase2-concurrency-counterexample.mjs）。
 // 修复后断言：
 //   ① 批次 A 在 LLM 停留时，第二个 phase2Integrate 返回 busy（不进入 LLM，calls 不增长）。
 //   ② 期间新增输出 B 保持 pending（不绑定任何批次、不消费）。
@@ -50,7 +50,7 @@ const { ctx, domain } = makeCtx({
   tools: { register: (t) => { tools[t.name] = t } },
 })
 
-const tmp = path.join(os.tmpdir(), 'dsh-memory-rollout-p2-singleflight-' + Date.now())
+const tmp = path.join(os.tmpdir(), 'dsh-memory_rollout-p2-singleflight-' + Date.now())
 process.env.DSH_HOME = tmp
 fs.mkdirSync(tmp, { recursive: true })
 const memoryRoot = () => path.join(tmp, 'memories')

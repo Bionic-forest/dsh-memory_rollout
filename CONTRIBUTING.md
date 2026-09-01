@@ -1,11 +1,11 @@
-# Contributing to dsh-memory-rollout
+# Contributing to dsh-memory_rollout
 
-Thanks for wanting to help maintain or extend dsh-memory-rollout. This guide walks a new
+Thanks for wanting to help maintain or extend dsh-memory_rollout. This guide walks a new
 maintainer (or a fork) through the whole thing so you can pick it up confidently.
 
 ## What this plugin is (30-second overview)
 
-`dsh-memory-rollout` is a DeepSeek Harness plugin that gives each session a **memory
+`dsh-memory_rollout` is a DeepSeek Harness plugin that gives each session a **memory
 draft paper** and the agent a **persistent, layered memory**, inspired by the
 Codex memory model. Two halves, one package:
 
@@ -19,7 +19,7 @@ Codex memory model. Two halves, one package:
 ## Repo layout
 
 ```
-dsh-memory-rollout/
+dsh-memory_rollout/
 ├── package.json          # manifest + dsh.bundle (npm package = cordis bundle)
 ├── cordis.patch.yml      # the config layer applied when a profile lists this bundle
 ├── lib/
@@ -63,7 +63,7 @@ This is a cordis bundle. To develop against your checkout:
 
 ```bash
 # install into a profile (uses the checked-out code via file: link)
-dsh plugin --profile web add ./dsh-memory-rollout
+dsh plugin --profile web add ./dsh-memory_rollout
 # or, to boot with a patch overlay without installing:
 dsh web --patch ./path/to/cordis.patch.yml
 ```
@@ -94,11 +94,11 @@ Then confirm the SHA of the three synced copies match (see the sync note below).
 
 ## Sync note (IMPORTANT)
 
-This project is installed into a profile as a `file:../../plugins/dsh-memory-rollout`
-dependency, so there are **two extra copies** that mirror `plugins/dsh-memory-rollout`:
+This project is installed into a profile as a `file:../../plugins/dsh-memory_rollout`
+dependency, so there are **two extra copies** that mirror `plugins/dsh-memory_rollout`:
 
-- `.dsh/plugins/dsh-memory-rollout/` (the profile's plugin source root)
-- `.dsh/profiles/web/node_modules/dsh-memory-rollout/` (the installed copy)
+- `.dsh/plugins/dsh-memory_rollout/` (the profile's plugin source root)
+- `.dsh/profiles/web/node_modules/dsh-memory_rollout/` (the installed copy)
 
 When you change `lib/*.js`, copy it to **both** of those so the running profile
 picks it up, and confirm the three SHA-256 hashes match.

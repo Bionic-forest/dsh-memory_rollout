@@ -14,7 +14,7 @@
 //     ⑥ 召回引用不出现「同关键词、不同事实」的错配——entry 只与同 session 证据共享一个词，
 //        真实 memoryCitationEntries 必须回退（不进 stage1 证据行、不伪造已核验）。
 //
-// 用法：cd plugins/dsh-memory-rollout && node test/p0-r2-4-real-e2e-verify.test.mjs
+// 用法：cd plugins/dsh-memory_rollout && node test/p0-r2-4-real-e2e-verify.test.mjs
 // 安全：全部使用 os.tmpdir() 下的独立临时 home，绝不触碰真实 DSH 的 storages/memories。
 
 import fs from 'node:fs'

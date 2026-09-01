@@ -1,4 +1,4 @@
-# dsh-memory-rollout
+# dsh-memory_rollout
 
 > **项目状态：实验性 / 尚未公开。** 这是一个 **vibe coding**（直觉驱动、AI 辅助快速开发）项目——由 AI agent 与人类协作者快速迭代而成。它足以支撑作者自用，但**未经充分测试、可能有粗糙边缘、API 与行为随时可能变动**。此阶段的缺陷、遗漏、bug 属正常预期。发布是为了学习与收集反馈，**不是**作为生产就绪的成熟插件。
 
@@ -10,7 +10,7 @@
 
 ## 它解决什么问题？
 
-DSH 的每个会话都从零开始。你开了新会话，Agent 不知道上一轮定了什么、你偏好什么、踩过哪些坑。`dsh-memory-rollout` 就是给 Agent 的「**第二大脑**」：事实、偏好、决策、项目笔记能跨会话活下来，并在需要时被想起。
+DSH 的每个会话都从零开始。你开了新会话，Agent 不知道上一轮定了什么、你偏好什么、踩过哪些坑。`dsh-memory_rollout` 就是给 Agent 的「**第二大脑**」：事实、偏好、决策、项目笔记能跨会话活下来，并在需要时被想起。
 
 关键的设计取舍（这也是它和普通「记忆库」不一样的地方）——**克制、不打扰**：
 
@@ -24,20 +24,20 @@ DSH 的每个会话都从零开始。你开了新会话，Agent 不知道上一�
 ## 安装
 
 ```bash
-dsh plugin --profile web add dsh-memory-rollout
+dsh plugin --profile web add dsh-memory_rollout
 ```
 
-`dsh.bundle` manifest 会自动把 `dsh-memory-rollout` 行挂进 profile。手动安装：
+`dsh.bundle` manifest 会自动把 `dsh-memory_rollout` 行挂进 profile。手动安装：
 
 ```bash
-pnpm add dsh-memory-rollout
+pnpm add dsh-memory_rollout
 ```
 
 再在你的 profile `cordis.yml`（或 `cordis.patch.yml`）加一行：
 
 ```yaml
-- id: dsh-memory-rollout
-  name: dsh-memory-rollout
+- id: dsh-memory_rollout
+  name: dsh-memory_rollout
 ```
 
 要求 DSH 基座为 `0.1.1-rc.2` 或更新（`peerDependencies` 声明 `^0.1.1-rc.2`）。
@@ -83,14 +83,14 @@ memory_precompact(content="要留的关键要点")           # → 压缩前防�
 | `consolidationReasoningEffort` | string | `''` | Phase 2 整合推理强度；空 = 模型默认 |
 
 ```yaml
-- id: dsh-memory-rollout
-  name: dsh-memory-rollout
+- id: dsh-memory_rollout
+  name: dsh-memory_rollout
   config:
     summaryTokens: 4000
     maxQuickSteps: 5
 ```
 
-设置页可在运行时编辑这些参数。改动持久化到 `<ds_home>/dsh-memory-rollout.settings.json`，下次启动重新应用（优先于 `cordis.patch.yml`）。`memoryRoot` 为只读。
+设置页可在运行时编辑这些参数。改动持久化到 `<ds_home>/dsh-memory_rollout.settings.json`，下次启动重新应用（优先于 `cordis.patch.yml`）。`memoryRoot` 为只读。
 
 ## 记忆布局
 
@@ -110,15 +110,15 @@ memory_precompact(content="要留的关键要点")           # → 压缩前防�
 
 ## 浏览器页
 
-设置 → 记忆库（Memory）。浏览摘要、注册表、逐会话草稿与笔记；快速添加与删除。经 harness `webServer` 服务托管（`GET/POST /dsh-memory-rollout/entries`、`/dsh-memory-rollout/overview`）。
+设置 → 记忆库（Memory）。浏览摘要、注册表、逐会话草稿与笔记；快速添加与删除。经 harness `webServer` 服务托管（`GET/POST /dsh-memory_rollout/entries`、`/dsh-memory_rollout/overview`）。
 
-`GET /dsh-memory-rollout/overview` 的 `status.capabilities.stage1SourceRead` 会暴露「当前进程能否读取会话来源」，用于诊断自动记忆是否因能力缺失被跳过。
+`GET /dsh-memory_rollout/overview` 的 `status.capabilities.stage1SourceRead` 会暴露「当前进程能否读取会话来源」，用于诊断自动记忆是否因能力缺失被跳过。
 
 页面还有一块「**设置**」：
 
-- **配置表单** — 运行时读取/编辑插件配置（`GET/POST /dsh-memory-rollout/config`）。每个可编辑字段显示当前值，偏离默认时标「≠ 默认」，悬浮 `?` 看解释。
-- **导出记忆** — 把整个 `memories/` 树（`memory_summary.md`、`MEMORY.md`、`rollout_summaries/`、`notes/`、`.watermark` 等）连同长期条目表一并打包成单个 JSON 备份下载（`GET /dsh-memory-rollout/export`）。
-- **导入记忆** — 恢复备份文件。先把现有记忆根复制到 `<ds_home>/memories-backup-<时间戳>`，再把备份解包进 `memories/` 并恢复条目表。导入是「替换」语义：先备份再导入（`POST /dsh-memory-rollout/import`）。
+- **配置表单** — 运行时读取/编辑插件配置（`GET/POST /dsh-memory_rollout/config`）。每个可编辑字段显示当前值，偏离默认时标「≠ 默认」，悬浮 `?` 看解释。
+- **导出记忆** — 把整个 `memories/` 树（`memory_summary.md`、`MEMORY.md`、`rollout_summaries/`、`notes/`、`.watermark` 等）连同长期条目表一并打包成单个 JSON 备份下载（`GET /dsh-memory_rollout/export`）。
+- **导入记忆** — 恢复备份文件。先把现有记忆根复制到 `<ds_home>/memories-backup-<时间戳>`，再把备份解包进 `memories/` 并恢复条目表。导入是「替换」语义：先备份再导入（`POST /dsh-memory_rollout/import`）。
 
 ## 开发
 
@@ -127,7 +127,7 @@ memory_precompact(content="要留的关键要点")           # → 压缩前防�
 - `lib/index.js` — host 半区：存储域、工具、提示注入、整合
 - `lib/client.js` — web 半区：设置页
 
-host 半改动需**重启 `dsh web`**（Node 缓存代码）；client 半可随 `pnpm run dev:web` 热更。改完 `lib/*.js` 后同步另两份副本（`.dsh/plugins/dsh-memory-rollout/` 与 `.dsh/profiles/web/node_modules/dsh-memory-rollout/`），并确认三处 SHA-256 一致。
+host 半改动需**重启 `dsh web`**（Node 缓存代码）；client 半可随 `pnpm run dev:web` 热更。改完 `lib/*.js` 后同步另两份副本（`.dsh/plugins/dsh-memory_rollout/` 与 `.dsh/profiles/web/node_modules/dsh-memory_rollout/`），并确认三处 SHA-256 一致。
 
 完整维护指南见 [`CONTRIBUTING.md`](./CONTRIBUTING.md)——含记忆模型怎么运作、常见改动在哪、怎么发版。
 

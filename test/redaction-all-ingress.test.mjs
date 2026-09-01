@@ -61,19 +61,19 @@ const check = (cond, msg) => {
   else { failed++; console.error('  ✗ ', msg) }
 }
 
-const tmp = path.join(os.tmpdir(), 'dsh-memory-rollout-ingress-' + Date.now())
+const tmp = path.join(os.tmpdir(), 'dsh-memory_rollout-ingress-' + Date.now())
 process.env.DSH_HOME = tmp
 fs.mkdirSync(tmp, { recursive: true })
 
 try {
   await apply(ctx, {})
-  assert.ok(routes['/dsh-memory-rollout/entries'], 'entries route registered')
-  assert.ok(routes['/dsh-memory-rollout/import'], 'import route registered')
+  assert.ok(routes['/dsh-memory_rollout/entries'], 'entries route registered')
+  assert.ok(routes['/dsh-memory_rollout/import'], 'import route registered')
 
   // ── (1) UI add entry redacts before writing ──────────────────────────────
   console.log('[1] UI add-entry redacts the stored content')
   {
-    const r = await call('/dsh-memory-rollout/entries', JSON.stringify({ action: 'add', content: SECRET, tags: ['a', 'b'] }))
+    const r = await call('/dsh-memory_rollout/entries', JSON.stringify({ action: 'add', content: SECRET, tags: ['a', 'b'] }))
     check(r.status === 200 && r.body && r.body.added === true, 'add returns ok')
     const raw = table._m.get(r.body.id)
     check(raw && raw.content.indexOf('sk-abcDEF123456') === -1 && raw.content.indexOf('P@ssw0rd') === -1, 'stored content has no raw secret')
@@ -84,12 +84,12 @@ try {
   console.log('[2] import entry redacts the restored table content')
   {
     const bundle = {
-      format: 'dsh-memory-rollout-memory-backup',
+      format: 'dsh-memory_rollout-memory-backup',
       version: 1,
       files: [{ path: 'rollout_summaries/imp.md', content: Buffer.from('imported file content', 'utf8').toString('base64') }],
       entries: [{ id: 'imp-1', content: SECRET, createdAt: '2026-08-27T00:00:00.000Z', updatedAt: '2026-08-27T00:00:00.000Z' }],
     }
-    const r = await call('/dsh-memory-rollout/import', JSON.stringify(bundle))
+    const r = await call('/dsh-memory_rollout/import', JSON.stringify(bundle))
     check(r.status === 200 && r.body && r.body.ok === true, 'import returns ok')
     const stored = table._m.get('imp-1')
     check(stored && stored.content.indexOf('sk-abcDEF123456') === -1 && stored.content.indexOf('P@ssw0rd') === -1, 'imported content has no raw secret')
@@ -99,7 +99,7 @@ try {
   // ── (3) ordinary non-secret content is NOT mangled ────────────────────────
   console.log('[3] ordinary content is preserved (no false-positive redaction)')
   {
-    const r = await call('/dsh-memory-rollout/entries', JSON.stringify({ action: 'add', content: 'set up the build config and run the tests', tags: [] }))
+    const r = await call('/dsh-memory_rollout/entries', JSON.stringify({ action: 'add', content: 'set up the build config and run the tests', tags: [] }))
     const raw = table._m.get(r.body.id)
     check(raw && raw.content === 'set up the build config and run the tests', 'ordinary text unchanged')
   }

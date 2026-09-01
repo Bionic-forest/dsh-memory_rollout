@@ -14,7 +14,7 @@ const check = (cond, msg) => { if (cond) console.log('  ✓ ', msg); else { fail
 const injtext = (s) => { try { return String(s.text()) } catch { return 'ERR:' + String((s && s.text) || 'no-text-fn') } }
 
 try {
-  const tmp = path.join(os.tmpdir(), 'dsh-memory-rollout-m1-' + Date.now())
+  const tmp = path.join(os.tmpdir(), 'dsh-memory_rollout-m1-' + Date.now())
   process.env.DSH_HOME = tmp
   fs.mkdirSync(tmp, { recursive: true })
   const mr = path.join(tmp, 'memories')
@@ -23,11 +23,11 @@ try {
 
   await apply(ctx, { recallLimit: 50 })
   // 构造「自动记忆」：写进根 memory_summary.md（无版本时 resolveCurrentFiles 回退根路径）
-  fs.appendFileSync(path.join(mr, 'memory_summary.md'), '\n- 项目决定：dsh-memory-rollout 后续采用「轻量证据索引」方案（X 方案）\n- 用户偏好：咖啡在工作前喝\n')
-  fs.appendFileSync(path.join(mr, 'MEMORY.md'), '\n## 自动记忆\n- 项目决定：dsh-memory-rollout 后续采用「轻量证据索引」方案（X 方案）\n')
+  fs.appendFileSync(path.join(mr, 'memory_summary.md'), '\n- 项目决定：dsh-memory_rollout 后续采用「轻量证据索引」方案（X 方案）\n- 用户偏好：咖啡在工作前喝\n')
+  fs.appendFileSync(path.join(mr, 'MEMORY.md'), '\n## 自动记忆\n- 项目决定：dsh-memory_rollout 后续采用「轻量证据索引」方案（X 方案）\n')
   // 草稿/证据：session-cite 的 rollout_summary 证据文件
   fs.mkdirSync(path.join(mr, 'rollout_summaries'), { recursive: true })
-  fs.writeFileSync(path.join(mr, 'rollout_summaries', 'session-cite.md'), '# 会话草稿\n- 用户说：dsh-memory-rollout 这次用「轻量证据索引」来加速召回\n')
+  fs.writeFileSync(path.join(mr, 'rollout_summaries', 'session-cite.md'), '# 会话草稿\n- 用户说：dsh-memory_rollout 这次用「轻量证据索引」来加速召回\n')
 
   // ── ① 自动记忆可被 recall 找到（entries 为空也算）──
   console.log('[①] recall 找到「自动记忆」（记忆文件里，非 entries）')
@@ -93,7 +93,7 @@ try {
 
 // ② 单独：useMemories=false 的 apply
 try {
-  const tmp2 = path.join(os.tmpdir(), 'dsh-memory-rollout-m1-off-' + Date.now())
+  const tmp2 = path.join(os.tmpdir(), 'dsh-memory_rollout-m1-off-' + Date.now())
   process.env.DSH_HOME = tmp2
   fs.mkdirSync(tmp2, { recursive: true })
   // M1-R5：捕获注入 section，断言 useMemories=false 时 text() 严格为空
@@ -102,8 +102,8 @@ try {
   await apply(ctx, { useMemories: false })
   const r = await ctx.tools['memory_recall'].execute({ query: 'anything' })
   check(Array.isArray(r.entries) && r.entries.length === 0 && Array.isArray(r.memories) && r.memories.length === 0, 'useMemories=false → recall 返回空')
-  const injectSection = sections.find((s) => s && s.name === 'dsh-memory-rollout')
-  check(!!injectSection, '捕获到 dsh-memory-rollout 注入 section（M1-R5）')
+  const injectSection = sections.find((s) => s && s.name === 'dsh-memory_rollout')
+  check(!!injectSection, '捕获到 dsh-memory_rollout 注入 section（M1-R5）')
   check(injectSection && injtext(injectSection) === '', 'useMemories=false → 注入 section.text() 严格为空')
 } finally {
   try { fs.rmSync(tmp2, { recursive: true, force: true }) } catch {}

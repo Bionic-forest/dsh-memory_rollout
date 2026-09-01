@@ -31,7 +31,7 @@ const ctx = {
   on: () => () => {},
 }
 
-const tmp = path.join(os.tmpdir(), 'dsh-memory-rollout-unverified-' + Date.now())
+const tmp = path.join(os.tmpdir(), 'dsh-memory_rollout-unverified-' + Date.now())
 process.env.DSH_HOME = tmp
 fs.mkdirSync(tmp, { recursive: true })
 const memoryRoot = () => path.join(tmp, 'memories')

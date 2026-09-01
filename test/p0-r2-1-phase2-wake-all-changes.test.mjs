@@ -1,6 +1,6 @@
 // P0-R2-1 反例：Phase2 唤醒必须覆盖**所有** memory_changes 生产入口（不止 remember / UI add）。
 // 上一轮只把 requestPhase2Integrate 散落在 memory_remember / UI add；forget（memory_forget →
-// forgetRecord）、note（memory_note）、UI delete（/dsh-memory-rollout/entries action=delete →
+// forgetRecord）、note（memory_note）、UI delete（/dsh-memory_rollout/entries action=delete →
 // forgetRecord）写入 pending change 后**没有**唤醒 Phase 2，导致空闲期 change 长期 pending、
 // 权威 current 不更新（P0-4 同类残留）。
 // 本轮把唤醒收口到 writeChangeRecord（成功 put 后异步 request），故此处只测这三个入口：
@@ -62,7 +62,7 @@ const llmMock = {
   },
 }
 
-// fake webServer（捕获 /dsh-memory-rollout/entries 路由，走 UI delete）。
+// fake webServer（捕获 /dsh-memory_rollout/entries 路由，走 UI delete）。
 const routes = {}
 const webServer = { register: (r) => { routes[r.path] = r; return () => {} } }
 
@@ -81,7 +81,7 @@ const root = () => path.join(tmp, 'memories')
 const postEntries = (payload) => {
   const req = { method: 'POST', on: (ev, cb) => { if (ev === 'data') req._d = cb; else if (ev === 'end') req._e = cb } }
   const res = { statusCode: 0, setHeader() {}, body: '', end(b) { res.body = b } }
-  const h = routes['/dsh-memory-rollout/entries'].handler
+  const h = routes['/dsh-memory_rollout/entries'].handler
   const p = h(req, res)
   req._d(JSON.stringify(payload))
   req._e()
@@ -91,7 +91,7 @@ const postEntries = (payload) => {
 try {
   await apply(ctx, { recallLimit: 20 })
   assert.ok(tools.memory_forget && tools.memory_note && tools.memory__phase2_integrate, 'forget/note/integrate tools registered')
-  assert.ok(routes['/dsh-memory-rollout/entries'], '/dsh-memory-rollout/entries route registered')
+  assert.ok(routes['/dsh-memory_rollout/entries'], '/dsh-memory_rollout/entries route registered')
 
   // ── [A] memory_forget 唤醒（无手动 integrate、无 Stage1 事件）──────────────
   console.log('[A] forget 产生的 pending change 自动消费 + current 反映（不再含被遗忘内容）')
@@ -130,7 +130,7 @@ try {
     check(currentSummary(root()).includes(noteContent), 'current reflects the noted content')
   }
 
-  // ── [C] UI delete 唤醒（/dsh-memory-rollout/entries action=delete → forgetRecord）────
+  // ── [C] UI delete 唤醒（/dsh-memory_rollout/entries action=delete → forgetRecord）────
   console.log('[C] UI delete 产生的 pending change 自动消费 + current 反映')
   {
     const forgotten = 'the celestial observatory telescopes the periphery'

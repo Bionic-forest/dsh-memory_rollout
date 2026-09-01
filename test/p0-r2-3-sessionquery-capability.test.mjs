@@ -19,7 +19,7 @@ const check = (cond, msg) => {
   else { failed++; console.error('  ✗ ', msg) }
 }
 
-// 只读 DB 后端 + 捕获 webServer 路由，供 GET /dsh-memory-rollout/overview。
+// 只读 DB 后端 + 捕获 webServer 路由，供 GET /dsh-memory_rollout/overview。
 function makeHarness(hasSessionQuery) {
   const routes = {}
   const webServer = { register: (r) => { routes[r.path] = r; return () => {} } }
@@ -36,7 +36,7 @@ function makeHarness(hasSessionQuery) {
 const getOverview = (routes) => {
   const req = { method: 'GET', on: () => {} }
   const res = { statusCode: 0, setHeader() {}, body: '', end(b) { res.body = b } }
-  const h = routes['/dsh-memory-rollout/overview'].handler
+  const h = routes['/dsh-memory_rollout/overview'].handler
   return Promise.resolve(h(req, res)).then(() => JSON.parse(res.body || '{}'))
 }
 

@@ -54,7 +54,7 @@ const waitUntil = async (fn, ms) => {
 }
 
 async function runScenario({ sessionId, messageText, llmMode }) {
-  const tmp = path.join(os.tmpdir(), 'dsh-memory-rollout-noop-' + sessionId + '-' + Date.now())
+  const tmp = path.join(os.tmpdir(), 'dsh-memory_rollout-noop-' + sessionId + '-' + Date.now())
   fs.mkdirSync(tmp, { recursive: true })
   process.env.DSH_HOME = tmp
   const eventHandlers = {}

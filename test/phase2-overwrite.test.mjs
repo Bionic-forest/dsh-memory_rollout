@@ -54,7 +54,7 @@ const { ctx, domain } = makeCtx({
   tools: { register: (t) => { tools[t.name] = t } },
 })
 
-const tmp = path.join(os.tmpdir(), 'dsh-memory-rollout-ph2ow-' + Date.now())
+const tmp = path.join(os.tmpdir(), 'dsh-memory_rollout-ph2ow-' + Date.now())
 process.env.DSH_HOME = tmp
 fs.mkdirSync(tmp, { recursive: true })
 const root = () => path.join(tmp, 'memories')

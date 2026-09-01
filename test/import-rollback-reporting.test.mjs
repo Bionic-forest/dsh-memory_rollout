@@ -60,7 +60,7 @@ async function callImport(rawText) {
   const req = new FakeReq('POST')
   const res = { statusCode: 0, headers: {}, setHeader(k, v) { this.headers[k] = v }, body: '' }
   res.end = (b) => { res.body = b }
-  const handler = routes['/dsh-memory-rollout/import'].handler
+  const handler = routes['/dsh-memory_rollout/import'].handler
   const p = handler(req, res)
   req.emit('data', rawText)
   req.emit('end')
@@ -70,7 +70,7 @@ async function callImport(rawText) {
   return { status: res.statusCode, body: parsed }
 }
 
-const tmpHome = path.join(os.tmpdir(), 'dsh-memory-rollout-rollback-' + Date.now())
+const tmpHome = path.join(os.tmpdir(), 'dsh-memory_rollout-rollback-' + Date.now())
 process.env.DSH_HOME = tmpHome
 fs.mkdirSync(tmpHome, { recursive: true })
 const memoryRoot = () => path.join(tmpHome, 'memories')
@@ -87,7 +87,7 @@ const preFiles = () => listFiles().sort().join(',')
 const preEntries = () => listEntries().join('|')
 const b64 = (s) => Buffer.from(s, 'utf8').toString('base64')
 const bundle = () => ({
-  format: 'dsh-memory-rollout-memory-backup',
+  format: 'dsh-memory_rollout-memory-backup',
   version: 1,
   files: [{ path: 'rollout_summaries/new.md', content: b64('should never land') }],
   entries: [{ id: 'new-entry', content: 'new entry that should not persist', createdAt: '2026-02-01T00:00:00.000Z', updatedAt: '2026-02-01T00:00:00.000Z' }],

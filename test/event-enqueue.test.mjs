@@ -19,7 +19,7 @@ const { ctx, domain } = makeCtx({
   on: (ev, cb) => { eventHandlers[ev] = cb; return () => {} },
 })
 
-const tmp = path.join(os.tmpdir(), 'dsh-memory-rollout-eventenq-' + Date.now())
+const tmp = path.join(os.tmpdir(), 'dsh-memory_rollout-eventenq-' + Date.now())
 process.env.DSH_HOME = tmp
 fs.mkdirSync(tmp, { recursive: true })
 const readJobs = (d) => jobListOf(d)

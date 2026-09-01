@@ -1,4 +1,4 @@
-// dsh-memory-rollout 测试共享 helper：构造多表 fake storageDomain（dsh_rollout 域），
+// dsh-memory_rollout 测试共享 helper：构造多表 fake storageDomain（dsh_rollout 域），
 // 供迁移后的阶段 A/阶段 B 测试「读表」断言，替代旧 `.stage1-state.json` 文件读。
 //
 // fake `domain.table(name)` 返回 per-name 的 Map 后端，支持 storage-domain 的
