@@ -27,8 +27,8 @@ dsh-memory_rollout/
 │   └── client.js         # web half (settings page)
 ├── LICENSE               # MIT
 ├── NOTICE                # attribution (Codex Apache-2.0 + dsh-memory MIT)
-├── README.md             # docs (en)
-├── README.zh.md          # docs (zh)
+├── README.md             # docs (zh, default)
+├── README.en.md          # docs (en)
 └── CONTRIBUTING.md       # this file
 ```
 
@@ -110,7 +110,7 @@ picks it up, and confirm the three SHA-256 hashes match.
    major for a breaking change).
 3. Sync the three copies.
 4. Run `node --check` on `lib/index.js` and `lib/client.js`.
-5. Update `README.md` / `README.zh.md` if the behavior or config changed.
+5. Update `README.md` / `README.en.md` if the behavior or config changed.
 6. Add a line to `CHANGELOG-插件变更.md`.
 7. Test the actual behavior (restart `dsh web`, trigger a session end, confirm the
    draft is written).

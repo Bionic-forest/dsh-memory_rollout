@@ -1,149 +1,91 @@
 # dsh-memory_rollout
 
-> **Project status: experimental / not yet public.** This is a **vibe-coding**
-> project — it was built rapidly by an AI agent with its human collaborator,
-> iterating on ideas as they came. It works well enough for the author's own
-> use, but it has NOT been battle-tested, may have rough edges, and its API and
-> behavior can change without notice. Issues, gaps, and bugs are fair game and
-> expected at this stage. It is published to learn and to gather feedback, not
-> presented as a finished, production-ready plugin.
+> 为 DeepSeek Harness (DSH) 提供的 Codex 式会话持久记忆。
+> [English README](./README.en.md)
 
-Codex-style per-session memory for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (DSH).
+> 早期版本（0.1.x），48/48 测试通过、已进入候选观察期，欢迎反馈。
 
-Inspired by the [Codex memory model](https://github.com/openai/codex) — layered, restrained, and passive. `dsh-memory_rollout` gives each session a draft paper and the agent a persistent, well-organized memory that is written only when it makes sense.
+## 解决什么问题
 
-- **One session, one draft** — each session writes `rollout_summaries/<sessionId>.md` (like a sub-`AGENTS.md`), writable by the agent on demand.
-- **Layered disclosure** — `memory_summary.md` (摘要, injected into the prompt) + `MEMORY.md` (searchable registry) + `rollout_summaries/` (per-session drafts) + notes. Grep-friendly, no full-scan.
-- **Restrained & passive** — the memory is written only on explicit user request; a decision boundary + quick memory pass (≤ 4-6 steps) guard when to look up memory, so it never floods the context.
-- **Idempotent integration** — a fingerprint + watermark gate skips re-integration when nothing changed (no wasted tokens).
-- **6 user-facing tools** — `memory_remember` / `memory_recall` / `memory_forget` / `memory_note` / `memory_integrate` / `memory_precompact`, plus two `memory__*` internal scheduler tools for operations and tests.
-- **Browser management page** — a "记忆库 / Memory" page to browse summaries, registry, drafts, and notes.
+DSH 的每个会话都从零开始。你开一个新会话，Agent 不知道上一轮定了什么、你偏好什么、踩过哪些坑。`dsh-memory_rollout` 给 Agent 一份**有组织、只在必要时才写**的持久记忆：事实、偏好、决策、项目笔记能跨会话活下来，并在需要时被想起、给出来源。
 
-## Install
+## 项目功能
+
+- **一会话一草稿** — 每个会话写 `rollout_summaries/<sessionId>.md`（类似子 `AGENTS.md`），Agent 按需写。
+- **分层披露** — `memory_summary.md`（注入提示）→ `MEMORY.md`（可搜索注册表）→ 少量相关草稿 / 笔记。grep 友好，不做全量扫描。
+- **克制被动** — 只在显式请求时写；快速记忆通道（≤4–6 步）决定何时查记忆，不淹没上下文。
+- **幂等整合** — 指纹 + 水印，无变化则不重复整合（不浪费 token）。
+- **6 个用户工具** — `memory_remember` / `memory_recall` / `memory_forget` / `memory_note` / `memory_integrate` / `memory_precompact`，另有 2 个 `memory__*` 内部调度工具。
+- **浏览器管理页** — 「记忆库 / Memory」页浏览摘要、注册表、草稿、笔记，可改配置、导入导出记忆。
+
+## 管线基本描述
+
+```
+会话结束/闲置 → 持久入队 (Stage 1)
+  → 提炼候选记忆 + append-only 证据（草稿 + source_ref）
+  → Phase 2 全局整合 + 版本化发布（current 原子切换 / 旧版可回退）
+  → 分层读取（总纲 → 注册表 → 少量草稿/证据）
+  → remember / forget / supersede 进入统一变更流，再整合成权威版本
+```
+
+约束：无信号会话不产出脏记忆；失败不伪装成成功；秘密在入口 / 模型 / 落盘三处脱敏；引用指向真实内容，否则诚实 `unverified`；当前用户指令与 `AGENTS.md` 高于记忆。
+
+## 安装
 
 ```bash
 dsh plugin --profile web add dsh-memory_rollout
 ```
 
-The `dsh.bundle` manifest wires the `dsh-memory_rollout` row into the profile automatically. To install by hand instead:
+`dsh.bundle` manifest 会自动把本插件挂进 profile。手动安装：
 
 ```bash
 pnpm add dsh-memory_rollout
 ```
 
-then add a row to your profile `cordis.yml` (or `cordis.patch.yml`):
+再在 profile 的 `cordis.yml`（或 `cordis.patch.yml`）加一行：
 
 ```yaml
 - id: dsh-memory_rollout
   name: dsh-memory_rollout
 ```
 
-Requires a DSH base of `0.1.1-rc.2` or newer (`peerDependencies` list `^0.1.1-rc.2`).
+要求 DSH 基座 `0.1.1-rc.2` 或更新（`peerDependencies` 声明 `^0.1.1-rc.2`）。插件把 `sessionQuery` 声明为**必需**服务（由 DSH 基座提供）——基座未挂载它则加载失败、自动记忆（Stage 1 来源读取）被禁用。
 
-The plugin declares `sessionQuery` as a **required** service (provided by the DSH base). If the base does not mount it, the plugin fails to load and automatic memory (Stage 1 source reading) is disabled.
+## 使用
 
-## Usage
+让 Agent 记住事情，或自己写：
 
-Tell the agent to remember something, or do it yourself:
-
-> "记住：这个项目的部署目标是 Windows，测试命令是 `pnpm test`。"
-
-The agent writes durable facts with `memory_remember`, explicit update notes with `memory_note`, and pre-compaction checkpoints with `memory_precompact`:
-
-```
+```text
 memory_remember(content="用户偏好…", tags=["pref"])   # → 长期记忆（带来源 sessionId）
 memory_note(slug="fix-x", content="…")               # → 临时 note（用户显式要求时）
 memory_integrate()                                    # → 幂等整合 summary/MEMORY.md
-memory_precompact(content="要留的关键要点")          # → draft + durable queue before compaction
+memory_precompact(content="要留的关键要点")          # → 压缩前防丢信息（草稿 + 持久队列）
 ```
 
-When context from an earlier session matters, the agent runs a quick memory pass: skim the injected summary → search `MEMORY.md` → open 1-2 relevant drafts → stop if no hits. `memory_recall(query="…")` is the explicit search entry.
+当涉及先前会话时，Agent 跑一次**快速记忆通道**：扫注入总纲 → 搜 `MEMORY.md` → 打开 1–2 个相关草稿 → 无命中即停。`memory_recall(query="…")` 是显式搜索入口。
 
-### Configuration
+## 配置
 
-The plugin exposes a schemastery config schema. The full parameter table:
+插件暴露一个 schemastery 配置 schema。完整参数表：
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `recallLimit` | int | 10 | Max entries returned by `memory_recall` |
-| `summaryTokens` | int | 4000 | Approximate token budget for injected `memory_summary.md` |
-| `maxQuickSteps` | int | 5 | Quick memory pass search-step budget |
-| `memoryRoot` | string | `''` | Optional override of the memory root; empty = `<ds_home>/memories` |
-| `generateMemories` | boolean | `true` | M2: whether a session contributes future memory (auto Phase 1). false = no auto Stage 1 job on dispose (manual `memory_precompact` / `memory_remember` still work). Independent from `useMemories`. |
-| `useMemories` | boolean | `true` | Whether to provide memory to the model (inject + recall). false = no inject/recall (generation can be toggled independently) |
-| `maxModelAttemptsPerDay` | number | 24 | Daily Stage 1 model-attempt cap; failed attempts count |
-| `extractProvider` | string | `''` | Provider route for LLM extraction; empty = harness default |
-| `extractModel` | string | `''` | Provider model id for extraction; empty = harness default |
-| `extractReasoningEffort` | string | `'low'` | Reasoning effort for extraction (adapter vocab) |
-| `maxExtractTokens` | number | 8000 | Coarse input-token cap for the transcript fed to the LLM |
-| `consolidationProvider` | string | `''` | Provider route for Phase 2 consolidation; empty = harness default |
-| `consolidationModel` | string | `''` | Model id for Phase 2 consolidation; empty = harness default |
-| `consolidationReasoningEffort` | string | `''` | Reasoning effort for Phase 2 consolidation; empty = model default |
+| `recallLimit` | int | 10 | `memory_recall` 最多返回条目数 |
+| `summaryTokens` | int | 4000 | 注入 `memory_summary.md` 的 token 预算 |
+| `maxQuickSteps` | int | 5 | 快速记忆通道搜索步数预算 |
+| `memoryRoot` | string | `''` | 覆盖记忆根；空 = `<ds_home>/memories` |
+| `generateMemories` | boolean | `true` | 会话是否贡献未来记忆（自动 Stage 1）；false = 不自动入队 |
+| `useMemories` | boolean | `true` | 是否给模型记忆（注入 + 召回） |
+| `maxModelAttemptsPerDay` | number | 24 | 每日 Stage 1 模型尝试上限；失败也算 |
+| `extractProvider` / `extractModel` / `extractReasoningEffort` / `maxExtractTokens` | | | Stage 1 提取的 LLM 路由 / 模型 / 推理档位 / 输入 token 上限 |
+| `consolidationProvider` / `consolidationModel` / `consolidationReasoningEffort` | | | Phase 2 整合的 LLM 路由 / 模型 / 推理档位 |
 
-```yaml
-- id: dsh-memory_rollout
-  name: dsh-memory_rollout
-  config:
-    summaryTokens: 3000
-    maxQuickSteps: 5
-```
+设置页可在运行时编辑，改动持久化到 `<ds_home>/dsh-memory_rollout.settings.json`，下次启动重新应用（优先于 `cordis.patch.yml`）。`memoryRoot` 只读。
 
-The settings page can edit these at runtime (see below). Runtime edits are persisted to
-`<ds_home>/dsh-memory_rollout.settings.json` and re-applied on the next startup, taking precedence
-over `cordis.patch.yml`. `memoryRoot` is read-only. Changes you make in the settings
-page affect the live process immediately.
+## 参考
 
-## Memory layout
+本插件的记忆模型与 LLM 提炼提示词**改编自** [openai/codex](https://github.com/openai/codex) 的记忆系统（Apache License 2.0）——面向 DeepSeek Harness 的独立重实现，未逐字分发其源码。同时改编自 `flymysql/dsh-memory`（MIT），即本插件脱胎的原始「跨会话记忆库」。详见 `NOTICE` 的署名。
 
-```
-<home>/memories/
-├── memory_summary.md         # injected summary (first line `v1`)
-├── MEMORY.md                 # searchable registry
-├── rollout_summaries/        # one draft per session (session_id / updated_at / cwd header)
-│   └── <sessionId>.md
-├── extensions/ad_hoc/notes/  # user-requested temporary notes
-├── .watermark                # idempotency watermark
-```
+## 协议
 
-> A session draft (`rollout_summaries/<sessionId>.md`) is **append-only**: new content appends after the previous line ranges, which stay stable, so line-range citations remain verifiable across repeated integrations.
-
-## Browser page
-
-Settings → 记忆库 (Memory). Browse summaries, the registry, per-session drafts, and notes; quick-add and delete. Hosted via the harness `webServer` service (`GET/POST /dsh-memory_rollout/entries`, `/dsh-memory_rollout/overview`).
-
-`GET /dsh-memory_rollout/overview` exposes `status.capabilities.stage1SourceRead` to show whether the current process can read session sources, useful to diagnose when automatic memory is skipped due to a missing capability.
-
-The page also has a **Settings** block:
-
-- **Config form** — read/edit the plugin config at runtime (`GET/POST /dsh-memory_rollout/config`). Each editable field shows its current value and a "≠ 默认" marker when it differs from the schema default.
-- **Export** — download the whole `memories/` tree (`memory_summary.md`, `MEMORY.md`, `rollout_summaries/`, `extensions/ad_hoc/notes/`, `.watermark`, …) plus the long-term entries table as a single JSON backup (`GET /dsh-memory_rollout/export`).
-- **Import** — restore a backup file. The existing memory root is copied to `<ds_home>/memories-backup-<timestamp>` first, then the bundle is unpacked into `memories/` and the entries table is restored. Import is intentionally replace-semantics: it backs up first, then imports (`POST /dsh-memory_rollout/import`).
-
-## Development
-
-The plugin is one cordis package:
-
-- `lib/index.js` — host half: domain, tools, prompt injection, integration
-- `lib/client.js` — web half: settings page
-
-Host-half changes need a **restart of `dsh web`** (Node caches the code); client-half
-can hot-reload with `pnpm run dev:web`. After editing `lib/*.js`, sync the two extra
-copies (`.dsh/plugins/dsh-memory_rollout/` and `.dsh/profiles/web/node_modules/dsh-memory_rollout/`)
-and confirm the three SHA-256 hashes match.
-
-See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for the full maintainer guide — how the
-memory model works, where to change common things, and how to ship a version.
-
-## License
-
-MIT
-
-## Acknowledgments
-
-This plugin's memory model and LLM extraction prompt are **inspired by, and
-adapted from**, the memory system of
-[openai/codex](https://github.com/openai/codex) (Apache License 2.0). It is an
-independent re-implementation for DeepSeek Harness and does not redistribute
-openai/codex source verbatim. See `NOTICE` for attribution. It was also adapted
-from `flymysql/dsh-memory` (MIT), the original "cross-session memory vault" the
-plugin grew out of.
+MIT（见 `LICENSE`）。
