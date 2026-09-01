@@ -40,6 +40,8 @@ then add a row to your profile `cordis.yml` (or `cordis.patch.yml`):
 
 Requires a DSH base of `0.1.1-rc.2` or newer (`peerDependencies` list `^0.1.1-rc.2`).
 
+The plugin declares `sessionQuery` as a **required** service (provided by the DSH base). If the base does not mount it, the plugin fails to load and automatic memory (Stage 1 source reading) is disabled.
+
 ## Usage
 
 Tell the agent to remember something, or do it yourself:
@@ -103,9 +105,13 @@ page affect the live process immediately.
 ├── .watermark                # idempotency watermark
 ```
 
+> A session draft (`rollout_summaries/<sessionId>.md`) is **append-only**: new content appends after the previous line ranges, which stay stable, so line-range citations remain verifiable across repeated integrations.
+
 ## Browser page
 
 Settings → 记忆库 (Memory). Browse summaries, the registry, per-session drafts, and notes; quick-add and delete. Hosted via the harness `webServer` service (`GET/POST /dsh-rollout/entries`, `/dsh-rollout/overview`).
+
+`GET /dsh-rollout/overview` exposes `status.capabilities.stage1SourceRead` to show whether the current process can read session sources, useful to diagnose when automatic memory is skipped due to a missing capability.
 
 The page also has a **Settings** block:
 

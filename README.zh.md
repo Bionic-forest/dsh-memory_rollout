@@ -42,6 +42,8 @@ pnpm add dsh-rollout
 
 要求 DSH 基座为 `0.1.1-rc.2` 或更新（`peerDependencies` 声明 `^0.1.1-rc.2`）。
 
+插件把 `sessionQuery` 声明为**必需**服务（由 DSH 基座提供）。若基座未挂载它，插件加载失败，自动记忆（Stage 1 来源读取）会被禁用。
+
 ## 用法
 
 让 Agent 记住事情，或自己写：
@@ -102,11 +104,15 @@ memory_precompact(content="要留的关键要点")           # → 压缩前防�
 ├── .watermark                # 幂等水印
 ```
 
+> 同一会话草稿（`rollout_summaries/<sessionId>.md`）是**追加式**：新内容追加在旧行段之后，旧行段保持稳定，因此基于行段的引用在多次整合后仍可核验。
+
 > ⚠️ **`memories/` 目录在你本机 `<ds_home>` 下，与插件代码分开**——卸载插件不会删你的记忆；但请记得**定期用设置页「导出记忆」备份**（你的记忆是本机数据，不进仓库）。
 
 ## 浏览器页
 
 设置 → 记忆库（Memory）。浏览摘要、注册表、逐会话草稿与笔记；快速添加与删除。经 harness `webServer` 服务托管（`GET/POST /dsh-rollout/entries`、`/dsh-rollout/overview`）。
+
+`GET /dsh-rollout/overview` 的 `status.capabilities.stage1SourceRead` 会暴露「当前进程能否读取会话来源」，用于诊断自动记忆是否因能力缺失被跳过。
 
 页面还有一块「**设置**」：
 
