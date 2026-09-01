@@ -11,9 +11,9 @@ Every DSH session starts from zero. When you open a new session, the agent doesn
 
 ## Features
 
-- **One session, one draft** — each session writes `rollout_summaries/<sessionId>.md` (like a sub-`AGENTS.md`), written on demand.
+- **One session, one draft** — each qualifying session has its evidence draft generated or appended by Stage 1 (`rollout_summaries/<sessionId>.md`, like a sub-`AGENTS.md`); the agent may also explicitly save key points before compaction.
 - **Layered disclosure** — `memory_summary.md` (injected into the prompt) → `MEMORY.md` (searchable registry) → a few relevant drafts / notes. Grep-friendly, no full-scan.
-- **Restrained & passive** — written only on explicit request; a quick memory pass (≤4–6 steps) decides when to look memory up, so it never floods the context.
+- **Restrained & passive** — automatic generation only processes qualifying sessions; manually adding, editing, or forgetting long-term memory happens only on explicit user request; a quick memory pass (≤4–6 steps) decides when to look memory up, so it never floods the context.
 - **Idempotent integration** — fingerprint + watermark; skips re-integration when nothing changed (no wasted tokens).
 - **6 user-facing tools** — `memory_remember` / `memory_recall` / `memory_forget` / `memory_note` / `memory_integrate` / `memory_precompact`, plus two `memory__*` internal scheduler tools.
 - **Browser management page** — a "记忆库 / Memory" page to browse summaries, registry, drafts, and notes; edit config and import/export memory.

@@ -11,9 +11,9 @@ DSH 的每个会话都从零开始。你开一个新会话，Agent 不知道上�
 
 ## 项目功能
 
-- **一会话一草稿** — 每个会话写 `rollout_summaries/<sessionId>.md`（类似子 `AGENTS.md`），Agent 按需写。
+- **一会话一草稿** — 每个符合资格的会话由 Stage 1 生成或追加证据草稿（`rollout_summaries/<sessionId>.md`，类似子 `AGENTS.md`）；Agent 也可在压缩前显式保存关键要点。
 - **分层披露** — `memory_summary.md`（注入提示）→ `MEMORY.md`（可搜索注册表）→ 少量相关草稿 / 笔记。grep 友好，不做全量扫描。
-- **克制被动** — 只在显式请求时写；快速记忆通道（≤4–6 步）决定何时查记忆，不淹没上下文。
+- **克制被动** — 自动生成只处理符合资格的会话；手动新增、修改或遗忘长期记忆，仅在用户显式请求时执行；快速记忆通道（≤4–6 步）决定何时查记忆，不淹没上下文。
 - **幂等整合** — 指纹 + 水印，无变化则不重复整合（不浪费 token）。
 - **6 个用户工具** — `memory_remember` / `memory_recall` / `memory_forget` / `memory_note` / `memory_integrate` / `memory_precompact`，另有 2 个 `memory__*` 内部调度工具。
 - **浏览器管理页** — 「记忆库 / Memory」页浏览摘要、注册表、草稿、笔记，可改配置、导入导出记忆。
