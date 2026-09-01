@@ -1,4 +1,4 @@
-# dsh-rollout
+# dsh-memory-rollout
 
 > **Project status: experimental / not yet public.** This is a **vibe-coding**
 > project — it was built rapidly by an AI agent with its human collaborator,
@@ -10,7 +10,7 @@
 
 Codex-style per-session memory for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (DSH).
 
-Inspired by the [Codex memory model](https://github.com/openai/codex) — layered, restrained, and passive. `dsh-rollout` gives each session a draft paper and the agent a persistent, well-organized memory that is written only when it makes sense.
+Inspired by the [Codex memory model](https://github.com/openai/codex) — layered, restrained, and passive. `dsh-memory-rollout` gives each session a draft paper and the agent a persistent, well-organized memory that is written only when it makes sense.
 
 - **One session, one draft** — each session writes `rollout_summaries/<sessionId>.md` (like a sub-`AGENTS.md`), writable by the agent on demand.
 - **Layered disclosure** — `memory_summary.md` (摘要, injected into the prompt) + `MEMORY.md` (searchable registry) + `rollout_summaries/` (per-session drafts) + notes. Grep-friendly, no full-scan.
@@ -22,20 +22,20 @@ Inspired by the [Codex memory model](https://github.com/openai/codex) — layere
 ## Install
 
 ```bash
-dsh plugin --profile web add dsh-rollout
+dsh plugin --profile web add dsh-memory-rollout
 ```
 
-The `dsh.bundle` manifest wires the `dsh-rollout` row into the profile automatically. To install by hand instead:
+The `dsh.bundle` manifest wires the `dsh-memory-rollout` row into the profile automatically. To install by hand instead:
 
 ```bash
-pnpm add dsh-rollout
+pnpm add dsh-memory-rollout
 ```
 
 then add a row to your profile `cordis.yml` (or `cordis.patch.yml`):
 
 ```yaml
-- id: dsh-rollout
-  name: dsh-rollout
+- id: dsh-memory-rollout
+  name: dsh-memory-rollout
 ```
 
 Requires a DSH base of `0.1.1-rc.2` or newer (`peerDependencies` list `^0.1.1-rc.2`).
@@ -81,15 +81,15 @@ The plugin exposes a schemastery config schema. The full parameter table:
 | `consolidationReasoningEffort` | string | `''` | Reasoning effort for Phase 2 consolidation; empty = model default |
 
 ```yaml
-- id: dsh-rollout
-  name: dsh-rollout
+- id: dsh-memory-rollout
+  name: dsh-memory-rollout
   config:
     summaryTokens: 3000
     maxQuickSteps: 5
 ```
 
 The settings page can edit these at runtime (see below). Runtime edits are persisted to
-`<ds_home>/dsh-rollout.settings.json` and re-applied on the next startup, taking precedence
+`<ds_home>/dsh-memory-rollout.settings.json` and re-applied on the next startup, taking precedence
 over `cordis.patch.yml`. `memoryRoot` is read-only. Changes you make in the settings
 page affect the live process immediately.
 
@@ -109,15 +109,15 @@ page affect the live process immediately.
 
 ## Browser page
 
-Settings → 记忆库 (Memory). Browse summaries, the registry, per-session drafts, and notes; quick-add and delete. Hosted via the harness `webServer` service (`GET/POST /dsh-rollout/entries`, `/dsh-rollout/overview`).
+Settings → 记忆库 (Memory). Browse summaries, the registry, per-session drafts, and notes; quick-add and delete. Hosted via the harness `webServer` service (`GET/POST /dsh-memory-rollout/entries`, `/dsh-memory-rollout/overview`).
 
-`GET /dsh-rollout/overview` exposes `status.capabilities.stage1SourceRead` to show whether the current process can read session sources, useful to diagnose when automatic memory is skipped due to a missing capability.
+`GET /dsh-memory-rollout/overview` exposes `status.capabilities.stage1SourceRead` to show whether the current process can read session sources, useful to diagnose when automatic memory is skipped due to a missing capability.
 
 The page also has a **Settings** block:
 
-- **Config form** — read/edit the plugin config at runtime (`GET/POST /dsh-rollout/config`). Each editable field shows its current value and a "≠ 默认" marker when it differs from the schema default.
-- **Export** — download the whole `memories/` tree (`memory_summary.md`, `MEMORY.md`, `rollout_summaries/`, `extensions/ad_hoc/notes/`, `.watermark`, …) plus the long-term entries table as a single JSON backup (`GET /dsh-rollout/export`).
-- **Import** — restore a backup file. The existing memory root is copied to `<ds_home>/memories-backup-<timestamp>` first, then the bundle is unpacked into `memories/` and the entries table is restored. Import is intentionally replace-semantics: it backs up first, then imports (`POST /dsh-rollout/import`).
+- **Config form** — read/edit the plugin config at runtime (`GET/POST /dsh-memory-rollout/config`). Each editable field shows its current value and a "≠ 默认" marker when it differs from the schema default.
+- **Export** — download the whole `memories/` tree (`memory_summary.md`, `MEMORY.md`, `rollout_summaries/`, `extensions/ad_hoc/notes/`, `.watermark`, …) plus the long-term entries table as a single JSON backup (`GET /dsh-memory-rollout/export`).
+- **Import** — restore a backup file. The existing memory root is copied to `<ds_home>/memories-backup-<timestamp>` first, then the bundle is unpacked into `memories/` and the entries table is restored. Import is intentionally replace-semantics: it backs up first, then imports (`POST /dsh-memory-rollout/import`).
 
 ## Development
 
@@ -128,7 +128,7 @@ The plugin is one cordis package:
 
 Host-half changes need a **restart of `dsh web`** (Node caches the code); client-half
 can hot-reload with `pnpm run dev:web`. After editing `lib/*.js`, sync the two extra
-copies (`.dsh/plugins/dsh-rollout/` and `.dsh/profiles/web/node_modules/dsh-rollout/`)
+copies (`.dsh/plugins/dsh-memory-rollout/` and `.dsh/profiles/web/node_modules/dsh-memory-rollout/`)
 and confirm the three SHA-256 hashes match.
 
 See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for the full maintainer guide — how the

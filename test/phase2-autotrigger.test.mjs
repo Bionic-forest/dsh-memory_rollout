@@ -41,7 +41,7 @@ const { ctx, domain } = makeCtx({
         : k === 'sessionQuery' ? { readSession } : undefined,
 })
 
-const tmp = path.join(os.tmpdir(), 'dsh-rollout-ph2auto-' + Date.now())
+const tmp = path.join(os.tmpdir(), 'dsh-memory-rollout-ph2auto-' + Date.now())
 process.env.DSH_HOME = tmp
 fs.mkdirSync(tmp, { recursive: true })
 const root = () => path.join(tmp, 'memories')

@@ -76,7 +76,7 @@ const mkCtxGet = (eventsFor, llmState) => (k) => {
 }
 
 const makeTmp = (tag) => {
-  const tmp = path.join(os.tmpdir(), `dsh-rollout-m2-${tag}-` + Date.now() + '-' + Math.random().toString(36).slice(2, 6))
+  const tmp = path.join(os.tmpdir(), `dsh-memory-rollout-m2-${tag}-` + Date.now() + '-' + Math.random().toString(36).slice(2, 6))
   process.env.DSH_HOME = tmp
   fs.mkdirSync(tmp, { recursive: true })
   return tmp

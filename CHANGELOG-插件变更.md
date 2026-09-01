@@ -1,4 +1,4 @@
-# CHANGELOG — dsh-rollout 插件变更
+# CHANGELOG — dsh-memory-rollout 插件变更
 
 遵循《向 Codex 原版系统看齐》工程总纲 §19 工作纪律：每次变更记录对应需求、行为变化、测试与成熟度等级变化。成熟度等级（L0–L4）见总纲 §3。
 
@@ -207,7 +207,7 @@ L2 中段；阶段 0 剩余：统一写协调（规模较大）。
 - 引入全局写维护锁 `withWrite`（异步）+ `withWriteSync`（同步），忙则拒绝（抛 writeConflict）。
 - **导入**：`importBundle` 持全局写锁（`withWrite`），替换原仅导入互斥的 `importLock`；并发第 2 个导入仍返回 409（importConflict 语义保留）。
 - **整合**：Phase 2 / 手动整合的 `integrate()` 用 `withWriteSync` 包裹（派生物发布互斥）。
-- **UI 增删**：`/dsh-rollout/entries` 的 add/delete 用 `withWrite[Sync]` 包裹。
+- **UI 增删**：`/dsh-memory-rollout/entries` 的 add/delete 用 `withWrite[Sync]` 包裹。
 - 读路径（recall/注入/overview/export/status）不持锁。
 - 设计对齐文档：`dsh-rollout-全局写协调-设计.md`。
 - 测试：`test/global-write-coordination.test.mjs`（导入进行中 UI 写被拒、锁释放后可写、导入自身成功）。

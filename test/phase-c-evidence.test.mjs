@@ -10,7 +10,7 @@ import { makeCtx, jobListOf, outputListOf, seedJob } from './lib/helpers.mjs'
 const PLUGIN = new URL('../lib/index.js', import.meta.url).href
 const { apply, validateSourceRef } = await import(PLUGIN)
 
-const tmp = path.join(os.tmpdir(), 'dsh-rollout-evidence-' + Date.now())
+const tmp = path.join(os.tmpdir(), 'dsh-memory-rollout-evidence-' + Date.now())
 process.env.DSH_HOME = tmp
 fs.mkdirSync(tmp, { recursive: true })
 const memoryRoot = () => path.join(tmp, 'memories')

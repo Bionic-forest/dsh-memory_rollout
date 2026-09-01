@@ -1,5 +1,5 @@
-dsh-rollout
-Copyright (c) 2026 dsh-rollout contributors
+dsh-memory-rollout
+Copyright (c) 2026 dsh-memory-rollout contributors
 
 This plugin's memory model (layered disclosure: memory_summary / MEMORY.md /
 rollout_summaries / notes; restrained & passive write discipline; idempotent

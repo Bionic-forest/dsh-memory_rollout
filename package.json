@@ -1,5 +1,5 @@
 {
-  "name": "dsh-rollout",
+  "name": "dsh-memory-rollout",
   "version": "0.1.6",
   "description": "Codex-style per-session memory draft for DeepSeek Harness: one session one draft (rollout_summaries), restrained & passive (write only on explicit user request), layered disclosure (summary + registry), idempotent integration watermark. / 一会话一草稿记忆插件。",
   "keywords": [

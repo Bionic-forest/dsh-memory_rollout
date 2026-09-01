@@ -15,7 +15,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { makeCtx, jobListOf, seedJob, setMeta, metaOf } from './lib/helpers.mjs'
 
-const HOME = path.join(os.tmpdir(), 'dsh-rollout-polish-' + Math.random().toString(36).slice(2, 8))
+const HOME = path.join(os.tmpdir(), 'dsh-memory-rollout-polish-' + Math.random().toString(36).slice(2, 8))
 fs.mkdirSync(HOME, { recursive: true })
 process.env.DSH_HOME = HOME
 

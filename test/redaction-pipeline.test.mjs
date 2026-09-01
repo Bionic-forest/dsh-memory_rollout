@@ -66,7 +66,7 @@ console.log('\n[B] memory_remember redacts before writing the entry')
 {
   const tools = {}
   const eventHandlers = {}
-  const tmp = path.join(os.tmpdir(), 'dsh-rollout-redact-B-' + Date.now())
+  const tmp = path.join(os.tmpdir(), 'dsh-memory-rollout-redact-B-' + Date.now())
   process.env.DSH_HOME = tmp
   fs.mkdirSync(tmp, { recursive: true })
   try {
@@ -94,7 +94,7 @@ console.log('\n[C] pipeline extract output redacts secrets (D1 transcript + D3 w
 {
   const tools = {}
   const eventHandlers = {}
-  const tmp = path.join(os.tmpdir(), 'dsh-rollout-redact-C-' + Date.now())
+  const tmp = path.join(os.tmpdir(), 'dsh-memory-rollout-redact-C-' + Date.now())
   process.env.DSH_HOME = tmp
   fs.mkdirSync(tmp, { recursive: true })
   try {

@@ -58,7 +58,7 @@ const { ctx, domain } = makeCtx({
   tools: { register: (t) => { tools[t.name] = t } },
 })
 
-const tmp = path.join(os.tmpdir(), 'dsh-rollout-changes-' + Date.now())
+const tmp = path.join(os.tmpdir(), 'dsh-memory-rollout-changes-' + Date.now())
 process.env.DSH_HOME = tmp
 fs.mkdirSync(tmp, { recursive: true })
 const root = () => path.join(tmp, 'memories')
@@ -227,12 +227,12 @@ try {
     check(currentSummary() === before, 'authoritative summary unchanged (idempotent)')
   }
 
-  // ── ④b import 变更可重放（通过 /dsh-rollout/import 路由触发）──────────────
+  // ── ④b import 变更可重放（通过 /dsh-memory-rollout/import 路由触发）──────────────
   console.log('[④b] import 入流：产生 kind=import 变更记录（可重放）')
   {
     const b64 = (s) => Buffer.from(s, 'utf8').toString('base64')
     const bundle = {
-      format: 'dsh-rollout-memory-backup',
+      format: 'dsh-memory-rollout-memory-backup',
       version: 1,
       files: [{ path: 'rollout_summaries/imp.md', content: b64('# imported session') }],
       entries: [{ id: 'imp-1', content: 'imported durable fact', createdAt: '2026-08-27T00:00:00.000Z', updatedAt: '2026-08-27T00:00:00.000Z' }],
@@ -240,7 +240,7 @@ try {
     const importBefore = changesOf('import').length
     const req = { method: 'POST', on: (ev, cb) => { if (ev === 'data') req._d = cb; else if (ev === 'end') req._e = cb } }
     const res = { statusCode: 0, setHeader() {}, body: '', end(b) { res.body = b } }
-    const handler = routes['/dsh-rollout/import'].handler
+    const handler = routes['/dsh-memory-rollout/import'].handler
     const p = handler(req, res)
     req._d(JSON.stringify(bundle))
     req._e()

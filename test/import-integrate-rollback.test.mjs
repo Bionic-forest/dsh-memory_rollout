@@ -42,14 +42,14 @@ async function callImport(rawText) {
   const req = new FakeReq('POST')
   const res = { statusCode: 0, headers: {}, setHeader(k, v) { this.headers[k] = v }, body: '' }
   res.end = (b) => { res.body = b }
-  const p = routes['/dsh-rollout/import'].handler(req, res)
+  const p = routes['/dsh-memory-rollout/import'].handler(req, res)
   req.emit('data', rawText)
   req.emit('end')
   await p
   return { status: res.statusCode, body: JSON.parse(res.body) }
 }
 
-const tmp = path.join(os.tmpdir(), 'dsh-rollout-introllback-' + Date.now())
+const tmp = path.join(os.tmpdir(), 'dsh-memory-rollout-introllback-' + Date.now())
 process.env.DSH_HOME = tmp
 fs.mkdirSync(tmp, { recursive: true })
 const memoryRoot = () => path.join(tmp, 'memories')
@@ -63,7 +63,7 @@ const check = (cond, msg) => {
 
 try {
   await apply(ctx, {})
-  assert.ok(routes['/dsh-rollout/import'], 'import route registered')
+  assert.ok(routes['/dsh-memory-rollout/import'], 'import route registered')
 
   // Pre-seed a known-good prior state (old entry + old registry file).
   table.put('old-entry', { content: 'old long-term entry', tags: ['old'], createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z', source: 'tool', sessionId: 's-old' })
@@ -73,7 +73,7 @@ try {
 
   // Bundle that makes memory_summary.md a DIRECTORY after switch → integrate() fails.
   const bundle = {
-    format: 'dsh-rollout-memory-backup',
+    format: 'dsh-memory-rollout-memory-backup',
     version: 1,
     files: [
       { path: 'memory_summary.md/sub', content: b64('nope') },

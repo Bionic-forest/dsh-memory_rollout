@@ -10,7 +10,7 @@ import { makeCtx, jobListOf, seedJob } from './lib/helpers.mjs'
 const PLUGIN = new URL('../lib/index.js', import.meta.url).href
 const { apply } = await import(PLUGIN)
 
-const tmp = path.join(os.tmpdir(), 'dsh-rollout-drain-' + Date.now())
+const tmp = path.join(os.tmpdir(), 'dsh-memory-rollout-drain-' + Date.now())
 process.env.DSH_HOME = tmp
 fs.mkdirSync(tmp, { recursive: true })
 const readJobs = (domain) => jobListOf(domain)

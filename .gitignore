@@ -1,4 +1,4 @@
-# dsh-rollout .gitignore
+# dsh-memory-rollout .gitignore
 
 # Backup / debug artifacts never shipped
 *.bak

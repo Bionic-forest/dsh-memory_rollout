@@ -1,7 +1,7 @@
 # @tag: reusable
-# @工程: dsh-rollout
+# @工程: dsh-memory-rollout
 # @主诉: 运行仓库内 *.test.mjs 并汇总结果，供本插件回归验收
-# dsh-rollout 全量测试运行器：只遍历 test/*.test.mjs，避免误跑 helper/临时脚本。
+# dsh-memory-rollout 全量测试运行器：只遍历 test/*.test.mjs，避免误跑 helper/临时脚本。
 # 用法：npm test   或   pwsh -File test/run-tests.ps1
 $dir = $PSScriptRoot
 $fail = 0

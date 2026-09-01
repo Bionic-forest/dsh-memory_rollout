@@ -12,7 +12,7 @@ const { apply } = await import(PLUGIN)
 
 const { ctx, domain } = makeCtx({ get: () => undefined }) // no sessionQuery/llm -> drained job reduces to no_output
 
-const tmp = path.join(os.tmpdir(), 'dsh-rollout-restart-' + Date.now())
+const tmp = path.join(os.tmpdir(), 'dsh-memory-rollout-restart-' + Date.now())
 process.env.DSH_HOME = tmp
 fs.mkdirSync(tmp, { recursive: true })
 const readJobs = (d) => jobListOf(d)

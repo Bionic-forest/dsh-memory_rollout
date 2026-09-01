@@ -25,7 +25,7 @@ const waitUntil = async (fn, ms) => { const t0 = Date.now(); while (Date.now() -
 let failed = 0
 const check = (cond, msg) => { if (cond) console.log('  ✓ ', msg); else { failed++; console.error('  ✗ ', msg) } }
 
-const tmp = path.join(os.tmpdir(), 'dsh-rollout-resume-' + Date.now())
+const tmp = path.join(os.tmpdir(), 'dsh-memory-rollout-resume-' + Date.now())
 process.env.DSH_HOME = tmp
 fs.mkdirSync(tmp, { recursive: true })
 

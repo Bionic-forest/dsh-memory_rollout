@@ -1,5 +1,5 @@
 // @tag: reusable
-// @工程: dsh-rollout
+// @工程: dsh-memory-rollout
 // @主诉: M3 真实用户闭环——端到端验收（真实 @deepseek-ai/dsh-storage-domain + 文件后端）
 //        驱动当前 lib/index.js，验证 M2 新逻辑 + M3 完成定义的管线侧核心。
 //
@@ -11,7 +11,7 @@
 //       发布版本摘要/注册表仍在（重启后读取成立）。
 //   [E] memory_recall 在发布后能召回自动记忆（渐进披露：总纲/注册表 + 引用）。
 //
-// 用法：cd plugins/dsh-rollout && node test/m3-e2e-acceptance.mjs  （安全：纯隔离 temp home）
+// 用法：cd plugins/dsh-memory-rollout && node test/m3-e2e-acceptance.mjs  （安全：纯隔离 temp home）
 // 注：不依赖宿主 HTTP；可直接 node 本文件观察结果，或宿主重启后用真实渠道人工复核。
 
 import fs from 'node:fs'
@@ -22,7 +22,7 @@ import { DomainFacility } from '@deepseek-ai/dsh-storage-domain'
 const PLUGIN = new URL('../lib/index.js', import.meta.url).href
 const { apply } = await import(PLUGIN)
 
-const tempHome = path.join(os.tmpdir(), 'dsh-rollout-m3-e2e-' + Date.now())
+const tempHome = path.join(os.tmpdir(), 'dsh-memory-rollout-m3-e2e-' + Date.now())
 process.env.DSH_HOME = tempHome
 fs.mkdirSync(path.join(tempHome, 'storages'), { recursive: true })
 fs.mkdirSync(path.join(tempHome, 'memories'), { recursive: true })
@@ -141,11 +141,11 @@ if (current) {
   // Phase 2 整合可能 no-change 跳过整合模型（预期），consolidCalls 至少 0；不强断言。
 }
 
-// ── Phase A2：M3 管理页 /dsh-rollout/overview 返回 status 字段（真实 handler）──
-console.log('[A2] /dsh-rollout/overview 返回 status 字段（M3 管理页“至少回答”6 项）')
+// ── Phase A2：M3 管理页 /dsh-memory-rollout/overview 返回 status 字段（真实 handler）──
+console.log('[A2] /dsh-memory-rollout/overview 返回 status 字段（M3 管理页“至少回答”6 项）')
 {
-  const overview = registeredRoutes.find((r) => r.path === '/dsh-rollout/overview')
-  check(!!overview, '捕获到 /dsh-rollout/overview 路由')
+  const overview = registeredRoutes.find((r) => r.path === '/dsh-memory-rollout/overview')
+  check(!!overview, '捕获到 /dsh-memory-rollout/overview 路由')
   let body = null
   const res = {
     statusCode: 0,

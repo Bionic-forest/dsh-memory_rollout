@@ -51,9 +51,9 @@ async function post(pathStr, body) {
   return { status: res.statusCode, body: parsed }
 }
 const b64 = (s) => Buffer.from(s, 'utf8').toString('base64')
-const importBundle = JSON.stringify({ format: 'dsh-rollout-memory-backup', version: 1, files: [{ path: 'rollout_summaries/x.md', content: b64('x') }], entries: [{ id: 'e1', content: 'x', createdAt: '2026-08-27T00:00:00.000Z' }] })
+const importBundle = JSON.stringify({ format: 'dsh-memory-rollout-memory-backup', version: 1, files: [{ path: 'rollout_summaries/x.md', content: b64('x') }], entries: [{ id: 'e1', content: 'x', createdAt: '2026-08-27T00:00:00.000Z' }] })
 
-const tmp = path.join(os.tmpdir(), 'dsh-rollout-writecoord-' + Date.now())
+const tmp = path.join(os.tmpdir(), 'dsh-memory-rollout-writecoord-' + Date.now())
 process.env.DSH_HOME = tmp
 fs.mkdirSync(tmp, { recursive: true })
 
@@ -65,15 +65,15 @@ const check = (cond, msg) => {
 
 try {
   await apply(ctx, {})
-  assert.ok(routes['/dsh-rollout/import'] && routes['/dsh-rollout/entries'], 'routes registered')
+  assert.ok(routes['/dsh-memory-rollout/import'] && routes['/dsh-memory-rollout/entries'], 'routes registered')
 
   // ── [1] import holds the write lock → concurrent UI add is rejected ────────
   console.log('[1] import in flight rejects a concurrent UI write')
   {
     table.putDelayMs(120) // make the import switch slow so it holds writeBusy
-    const pA = post('/dsh-rollout/import', importBundle)
+    const pA = post('/dsh-memory-rollout/import', importBundle)
     await new Promise((r) => setTimeout(r, 25)) // let the import acquire writeBusy + hit its slow put
-    const rUI = await post('/dsh-rollout/entries', JSON.stringify({ action: 'add', content: 'during import' }))
+    const rUI = await post('/dsh-memory-rollout/entries', JSON.stringify({ action: 'add', content: 'during import' }))
     check(rUI.status === 500, 'concurrent UI add is rejected (writeConflict)')
     check(rUI.body && /another write.*in progress/i.test(rUI.body.error), 'UI add error says write in progress')
     const rA = await pA
@@ -84,7 +84,7 @@ try {
   console.log('[2] after import, a UI write succeeds (lock released)')
   {
     table.putDelayMs(0)
-    const r = await post('/dsh-rollout/entries', JSON.stringify({ action: 'add', content: 'after import' }))
+    const r = await post('/dsh-memory-rollout/entries', JSON.stringify({ action: 'add', content: 'after import' }))
     check(r.status === 200 && r.body && r.body.added === true, 'post-import UI add returns 200')
   }
 } finally {

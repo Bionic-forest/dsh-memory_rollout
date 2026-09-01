@@ -30,7 +30,7 @@ const { ctx, domain } = makeCtx({
   get: (k) => (k === 'llm' ? llmMock : k === 'agentDefaultModel' ? { currentSelection: () => ({ provider: 'p', model: 'm' }) } : k === 'sessionQuery' ? { readSession } : undefined),
 })
 
-const tmp = path.join(os.tmpdir(), 'dsh-rollout-quota-' + Date.now())
+const tmp = path.join(os.tmpdir(), 'dsh-memory-rollout-quota-' + Date.now())
 process.env.DSH_HOME = tmp
 fs.mkdirSync(tmp, { recursive: true })
 const readJobs = (d) => jobListOf(d)

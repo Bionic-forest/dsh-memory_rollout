@@ -21,7 +21,7 @@ const { ctx, domain } = makeCtx({
   on: (ev, cb) => { eventHandlers[ev] = cb; return () => {} },
 })
 
-const tmpHome = path.join(os.tmpdir(), 'dsh-rollout-p03-test-' + Date.now())
+const tmpHome = path.join(os.tmpdir(), 'dsh-memory-rollout-p03-test-' + Date.now())
 process.env.DSH_HOME = tmpHome
 fs.mkdirSync(tmpHome, { recursive: true })
 

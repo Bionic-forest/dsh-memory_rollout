@@ -39,16 +39,16 @@ async function callImport(rawText) {
   const req = new FakeReq('POST')
   const res = { statusCode: 0, headers: {}, setHeader(k, v) { this.headers[k] = v }, body: '' }
   res.end = (b) => { res.body = b }
-  const p = routes['/dsh-rollout/import'].handler(req, res)
+  const p = routes['/dsh-memory-rollout/import'].handler(req, res)
   req.emit('data', rawText)
   req.emit('end')
   await p
   return { status: res.statusCode, body: JSON.parse(res.body) }
 }
 const b64 = (s) => Buffer.from(s, 'utf8').toString('base64')
-const bundle = (files, entries = []) => JSON.stringify({ format: 'dsh-rollout-memory-backup', version: 1, files, entries })
+const bundle = (files, entries = []) => JSON.stringify({ format: 'dsh-memory-rollout-memory-backup', version: 1, files, entries })
 
-const tmp = path.join(os.tmpdir(), 'dsh-rollout-importval-' + Date.now())
+const tmp = path.join(os.tmpdir(), 'dsh-memory-rollout-importval-' + Date.now())
 process.env.DSH_HOME = tmp
 fs.mkdirSync(tmp, { recursive: true })
 
@@ -60,7 +60,7 @@ const check = (cond, msg) => {
 
 try {
   await apply(ctx, {})
-  assert.ok(routes['/dsh-rollout/import'], 'import route registered')
+  assert.ok(routes['/dsh-memory-rollout/import'], 'import route registered')
 
   console.log('[1] invalid base64 rejected')
   {
