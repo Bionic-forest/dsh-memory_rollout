@@ -32,17 +32,28 @@ DSH 的每个会话都从零开始。你开一个新会话，Agent 不知道上�
 
 ## 安装
 
+> 版本 `0.1.7`。**npm registry 尚未正式发布**（`dsh plugin add dsh-memory_rollout` 需要包先被发布到 registry），因此「可兑现」的安装路径是 **GitHub 仓库 / 本地 tgz**。
+
+**方式 A：GitHub / 本地 tgz（已兑现，推荐）**
+
 ```bash
-dsh plugin --profile web add dsh-memory_rollout
+# 直接从仓库装（开发/自用）
+git clone git@github.com:Bionic-forest/dsh-memory_rollout.git
+pnpm add ./dsh-memory_rollout
+
+# 或用 `npm pack` 生成的 tgz 装
+pnpm add ./dsh-memory_rollout-0.1.7.tgz
 ```
 
-`dsh.bundle` manifest 会自动把本插件挂进 profile。手动安装：
+**方式 B：npm registry（未发布，暂不可用）**
 
 ```bash
+# 需先把包发布到 npm registry 后此命令才可兑现
+dsh plugin --profile web add dsh-memory_rollout
 pnpm add dsh-memory_rollout
 ```
 
-再在 profile 的 `cordis.yml`（或 `cordis.patch.yml`）加一行：
+`dsh.bundle` manifest 会自动把本插件挂进 profile。手动安装（任一种方式之后）在 profile 的 `cordis.yml`（或 `cordis.patch.yml`）加一行：
 
 ```yaml
 - id: dsh-memory_rollout

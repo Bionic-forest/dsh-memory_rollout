@@ -2,6 +2,28 @@
 
 遵循《向 Codex 原版系统看齐》工程总纲 §19 工作纪律：每次变更记录对应需求、行为变化、测试与成熟度等级变化。成熟度等级（L0–L4）见总纲 §3。
 
+## 2026-09-02 · v0.1.7 候选发布收口：P0-9 Phase2 过期作业延迟重试失醒修复 + 发布身份闭合
+
+响应《再次全量评估（2026-09-02）》：主体架构不需返工，但有一项真实运行中已出现的 P0（Phase 2 `retry_wait` 到期后失醒）与两组发布收口（版本/改名/npm 路径）未闭合。**判定：暂不宣布「稳定正式版」，先完成此轮 P0 与发布收口，再进入 2~5 天观察。** 基线：`1c036d8`。
+
+### 变更
+- **P0-9 修复 Phase 2 过期作业失醒**：`nextPhase2WakeAt()` 原来只把「未来的 `available_at`/租约」当唤醒时间；作业一旦已到期（`av<=nowMs` 或 `le<=nowMs`），反而返回 `null`。而 `schedulePhase2Wake()` 每次都先清旧计时器，于是到期附近若发生一次额外调度（busy / no-change / 恢复早退），过期的 `retry_wait`/`pending` 批会从时间调度视野消失，无新事件时无限停住。修复后对已到期非终态批返回「立即」（`nowMs`），由 `phase2Integrate` 单飞吸收，且已领取批的退避总是未来 `available_at`（≥30s），不形成忙循环。
+- **发布身份闭合（v0.1.7）**：版本升至 `0.1.7`；`files` 白名单改为显式列出脚本/文档/协议（确保 `.bak-*` 备份与 `*.tgz` 永不进包）；`description` 修订——区分「**合格会话自动提炼**（`generateMemories`）」与「**手动增/改/忘仅在显式请求时执行**」，不再笼统写 「only on explicit user request」。
+- **改名兼容策略（确定为不可逆）**：确认候选版（旧命名 `dsh-rollout`/`dsh-memory-rollout`）**未对外分发**（npm registry 尚未发布、仅本地 Git 远端、本机无旧设置文件），因此按评估第二分支「正式发布前的破坏性改名」处理：**不为此增加旧 settings 回退读取 / 旧 backup format 兼容**，并在发布说明明确 `dsh_rollout` 存储域不变、改名不可逆。
+- **README 安装路径改为可兑现**：把 GitHub 仓库 / `npm pack` 本地 tgz 设为「已兑现、推荐」安装路径；`dsh plugin --profile web add dsh-memory_rollout` / `pnpm add dsh-memory_rollout` 标注为「npm registry 尚未正式发布，暂不可用」。
+
+### 测试
+- 新增 `test/p0-9-phase2-expired-wake.test.mjs`（定时器级，黑盒驱动真实 `schedulePhase2Wake → setTimeout → phase2Integrate` 链，不直接调内部函数）四项：
+  - T1 恢复早退（`published→commit`）后重新武装唤醒，过期 `retry_wait` 不失醒；
+  - T2 busy 单飞吸收后由运行中纤维在返回点重排，过期批不丢；
+  - T3 启动时已过期批次被自动处理（启动冒烟）；
+  - T4 安全校验持续失败 → 按 `max_attempts` 进 `failed_terminal`，未泄露、不无限高频重试。
+- 验证：临时把修复回滚为缺陷版本 → T1/T2 各 2 条断言失败（4 失败），证明测试确能抓住缺陷；恢复修复后全绿。
+- 回归：`pwsh -NoProfile -File test/run-tests.ps1` → **49/49**；`node --check lib/index.js && node --check lib/client.js` 通过；`node test/m3-e2e-acceptance.mjs` A~G 全过；`npm pack` 产出 9 文件、`npm install <tgz> --legacy-peer-deps` 离线安装冒烟成功（tarball 内代码与仓库 SHA256 一致）。
+
+### 成熟度
+功能完成度约 88%～92%（工程判断）。P0 修复 + 发布收口完成；A.4「真实运行观察该批次自动进第三次尝试/终态」需**部署新代码并重启 DSH 进程**后验证（重启属宿主/用户域）。进入 2~5 天观察期，之后才可自信称「稳定正式版」。
+
 ## 2026-09-01 · R2.1 收口：会话草稿引用回退改为规范化完整子串（废除单 token 放行）
 
 响应 GPT 独立复核：`memoryCitationEntries` 的会话草稿回退原实现只要 entry 与草稿共享一个特征词（`tokenizeContent` 有交集）就返回 1-N 引用——同关键词不同事实（草稿「pnpm build failed」/ entry「user prefers pnpm over npm」）会被伪装成已核验引用，provenance 伪装成 evidence，与精确 Stage1 路径已删的单 token 放行同病。独立交叉复核（子代理，fresh context）确认缺陷实质消除、无残留单 token 放行路径。基线：`106a557`。

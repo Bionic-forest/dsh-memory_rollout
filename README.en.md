@@ -32,17 +32,28 @@ Constraints: no-signal sessions produce no dirty memory; failures never masquera
 
 ## Install
 
+> Version `0.1.7`. The plugin is **not yet published to the npm registry** (`dsh plugin add dsh-memory_rollout` needs the package to be published first), so the **redeemable** install path is the **GitHub repo / local tgz**.
+
+**Path A: GitHub / local tgz (redeemable, recommended)**
+
 ```bash
-dsh plugin --profile web add dsh-memory_rollout
+# Install straight from the repo (development / self-use)
+git clone git@github.com:Bionic-forest/dsh-memory_rollout.git
+pnpm add ./dsh-memory_rollout
+
+# Or install the tgz produced by `npm pack`
+pnpm add ./dsh-memory_rollout-0.1.7.tgz
 ```
 
-The `dsh.bundle` manifest wires this plugin into the profile automatically. To install by hand:
+**Path B: npm registry (not published, not redeemable yet)**
 
 ```bash
+# Only redeemable after the package is published to the npm registry
+dsh plugin --profile web add dsh-memory_rollout
 pnpm add dsh-memory_rollout
 ```
 
-then add a row to your profile's `cordis.yml` (or `cordis.patch.yml`):
+The `dsh.bundle` manifest wires this plugin into the profile automatically. To install by hand (after either path) add a row to your profile's `cordis.yml` (or `cordis.patch.yml`):
 
 ```yaml
 - id: dsh-memory_rollout
