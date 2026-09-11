@@ -1,6 +1,6 @@
 {
   "name": "dsh-memory_rollout",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "Codex-style per-session memory for DeepSeek Harness: qualified sessions auto-distill into per-session drafts (rollout_summaries); manual add/change/forget runs only on explicit user request; layered disclosure (summary + registry); idempotent integration watermark. / 一会话一草稿记忆插件：合格会话自动提炼草稿；手动增/改/忘仅在显式请求时执行；分层披露（总纲+注册表）；幂等整合水印。",
   "keywords": [
     "deepseek-harness",

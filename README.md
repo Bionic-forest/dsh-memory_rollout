@@ -3,7 +3,7 @@
 > 为 DeepSeek Harness (DSH) 提供的 Codex 式会话持久记忆。
 > [English README](./README.en.md)
 
-> 早期版本（0.1.x），48/48 测试通过、已进入候选观察期，欢迎反馈。
+> 早期版本（0.1.x），50/50 测试通过、已进入候选观察期，欢迎反馈。
 
 ## 解决什么问题
 
@@ -32,7 +32,7 @@ DSH 的每个会话都从零开始。你开一个新会话，Agent 不知道上�
 
 ## 安装
 
-> 版本 `0.1.7`。**npm registry 尚未正式发布**（`dsh plugin add dsh-memory_rollout` 需要包先被发布到 registry），因此「可兑现」的安装路径是 **GitHub 仓库 / 本地 tgz**。
+> 版本 `0.1.8`。**npm registry 尚未正式发布**（`dsh plugin add dsh-memory_rollout` 需要包先被发布到 registry），因此「可兑现」的安装路径是 **GitHub 仓库 / 本地 tgz**。
 
 **方式 A：GitHub / 本地 tgz（已兑现，推荐）**
 
@@ -42,7 +42,7 @@ git clone git@github.com:Bionic-forest/dsh-memory_rollout.git
 pnpm add ./dsh-memory_rollout
 
 # 或用 `npm pack` 生成的 tgz 装
-pnpm add ./dsh-memory_rollout-0.1.7.tgz
+pnpm add ./dsh-memory_rollout-0.1.8.tgz
 ```
 
 **方式 B：npm registry（未发布，暂不可用）**

@@ -2,6 +2,33 @@
 
 遵循《向 Codex 原版系统看齐》工程总纲 §19 工作纪律：每次变更记录对应需求、行为变化、测试与成熟度等级变化。成熟度等级（L0–L4）见总纲 §3。
 
+## 2026-09-11 · v0.1.8：显式入口 force 开关 + 记忆总纲尺寸闸门四件套
+
+本次把已在部署副本运行验证的两类改动同步回本仓库：**(a) 显式入口 `force` 绕过开关**、**(b) 记忆总纲尺寸闸门四件套**（三层闸门 / 一次性压缩 / 分层披露 / 上限参数化）。基线：`ef76cdf`（v0.1.7）。
+
+### 变更
+
+**(a) 显式入口 `force` 开关（主动记忆，默认关）**
+- `memory_precompact` 新增**可选、默认 false** 的 `force` 参数。传 `force:true` 才绕过 `assessEligibility()` 的 `external_context` 跳过（本会话出现过 `web_search`/`web_fetch` 时整会话跳过生成）；**不传 / false 行为与原来完全一致**。
+- **白名单式**：`force` 只由该显式入口透传到入队；**自动路径（`session/disposed`）永不携带 force**，`external_context` 规则本身与自动路径**零改动**。
+- 已存在的同 watermark 作业若已是 `succeeded_no_output`（被外部上下文跳过），force 时**重置为 pending** 以按 force 重新提炼（否则会被「已提炼过」永久挡掉）。
+- **留痕可审计**：job 记录写 `forced` / `force_reason` / `forced_at`，产出记录写 `forced` / `force_reason`，并在**日志**打两条明确记录（入队时 + worker 绕过时）。
+- **纪律条款（必须遵守）**：`force` **默认关**；**AI 不得擅自使用**；**仅当用户明确要求「把这段写进记忆」时**才可传 `force:true`。它绕过的是「会话用过 web_search/web_fetch → 整会话跳过提炼」这道门，**后果是外部来源内容可能因此进入长期记忆**；使用后 job/产出永久留 `forced:true` 痕迹，可被审计追责。**不替代条件判断。**
+
+**(b) 记忆总纲尺寸闸门四件套（t80）**
+- **三层闸门**：L1 输入限量（`clampPromptInputs` 按预算裁剪喂给整合模型的输入）；L2 尺寸限长 + 分层披露（提示词内下发 SIZE BUDGET / PROGRESSIVE DISCLOSURE 规则）；**L3 发布前尺寸闸门**（按代码点计数校验 `memory_summary` / `MEMORY.md`，超限**不发布、保留上一版**）。
+- **一次性压缩批**：新增批次模式 `mode: 'compress'`（`enqueueCompressBatch`）——**只由显式入口** `memory_integrate {compress:true}` **创建**；**调度器（`claimNextPhase2Job`）与自动路径永不创建 compress 批**。compress 批「无新输入」是正常语义，故对 `no-inputs` 失败豁免（普通批行为逐字不变）。
+- **分层披露**：`memory_summary` 每条记忆限单行、约 ≤120 字符（Progressive disclosure），把「总纲」压成可注入的摘要层。
+- **上限参数化**：字符上限由 `config.summaryTokens` 派生（`summaryCapFromTokens` / `registryCapFromTokens`，默认 4000 → summary 14,400 / registry 24,000 字符），并使提示词里的 SIZE BUDGET / COMPRESSION MODE 文本随 `summaryTokens` 变化。
+- **纪律条款**：`compress` 批**只由显式入口独占创建**，**调度器永不创建**。
+
+### 测试
+- 回归（同步后的新 `lib/index.js`）：`pwsh -NoProfile -File test/run-tests.ps1` → **49/49**；`node test/m3-e2e-acceptance.mjs` → **ALL M3 E2E ACCEPTANCE PASSED**（合计 **50/50**，0 FAIL）。
+- `force` 专项（隔离临时 DSH_HOME）：不带 force 仍被 `external_context` 跳过（未调 llm、未产出、作业无 `forced` 字段）；带 force 经显式入口入队 `forced=true` 并产出 `stage1_outputs`（产物 `forced=true`）；worker 层 forced 绕过；已跳过作业 force 后重置 pending 并产出；自动路径入队作业无 `forced`；无外部上下文会话行为不变。真实记忆库 SHA/size/mtime 跑测试前后完全一致（未污染）。
+
+### 成熟度
+功能完成度约 88%～92%（工程判断）。两类改动已在部署副本经真实运行验证并重启生效；本仓库同步后 50/50 全绿。仍处候选观察期。
+
 ## 2026-09-02 · v0.1.7 候选发布收口：P0-9 Phase2 过期作业延迟重试失醒修复 + 发布身份闭合
 
 响应《再次全量评估（2026-09-02）》：主体架构不需返工，但有一项真实运行中已出现的 P0（Phase 2 `retry_wait` 到期后失醒）与两组发布收口（版本/改名/npm 路径）未闭合。**判定：暂不宣布「稳定正式版」，先完成此轮 P0 与发布收口，再进入 2~5 天观察。** 基线：`1c036d8`。

@@ -3,7 +3,7 @@
 > Codex-style per-session memory for DeepSeek Harness (DSH).
 > [中文 README](./README.md)
 
-> Early version (0.1.x), 48/48 tests passing, in candidate-release observation. Feedback is welcome.
+> Early version (0.1.x), 50/50 tests passing, in candidate-release observation. Feedback is welcome.
 
 ## What problem it solves
 
@@ -32,7 +32,7 @@ Constraints: no-signal sessions produce no dirty memory; failures never masquera
 
 ## Install
 
-> Version `0.1.7`. The plugin is **not yet published to the npm registry** (`dsh plugin add dsh-memory_rollout` needs the package to be published first), so the **redeemable** install path is the **GitHub repo / local tgz**.
+> Version `0.1.8`. The plugin is **not yet published to the npm registry** (`dsh plugin add dsh-memory_rollout` needs the package to be published first), so the **redeemable** install path is the **GitHub repo / local tgz**.
 
 **Path A: GitHub / local tgz (redeemable, recommended)**
 
@@ -42,7 +42,7 @@ git clone git@github.com:Bionic-forest/dsh-memory_rollout.git
 pnpm add ./dsh-memory_rollout
 
 # Or install the tgz produced by `npm pack`
-pnpm add ./dsh-memory_rollout-0.1.7.tgz
+pnpm add ./dsh-memory_rollout-0.1.8.tgz
 ```
 
 **Path B: npm registry (not published, not redeemable yet)**
