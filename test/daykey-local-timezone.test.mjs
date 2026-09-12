@@ -129,6 +129,58 @@ console.log('\n[D] 本地 00:00 边界：本地 23:59:59 → 次日 00:00:01 即
   check(res.processed >= 1, '跨日重置后恢复领取')
 }
 
+// ── [E] 唤醒点：预算耗尽 + 有到期作业 → 唤醒点 = **本地次日 00:00**（t132）────────
+// 观测手法：`scheduleStage1Wake()` 内部 `setTimeout(fn, max(0, nextAt - Date.now()))`，
+// 故给全局 setTimeout 装侦听，收集「> 2h 的长延时」——退避上限只有 1h，故长延时只可能来自日边界。
+console.log('\n[E] 预算耗尽 + 有到期作业 → 跨日唤醒点 = 本地次日 00:00')
+const realSetTimeout = globalThis.setTimeout
+let longDelays = []
+globalThis.setTimeout = (fn, ms, ...rest) => {
+  if (typeof ms === 'number' && ms > 2 * 3600 * 1000) longDelays.push(ms)
+  return realSetTimeout(() => {}, 0) // 不真的睡长觉（否则进程会被挂住）
+}
+{
+  const { ctx, domain } = makeCtx({ get: () => undefined })
+  await apply(ctx, {})
+
+  // 本地 2026-09-13 10:00（+08）→ 本地次日 00:00 距此 14h
+  NOW = localMidnightPlus8('2026-09-13T10:00:00')
+  const day = localDayOf(NOW)
+  await setMeta(domain, { runDay: day, modelAttemptsToday: 999, lastSuccessWatermark: '', lastPhase2At: '', phase2_last_error: '' })
+  await seedJob(domain, 'wakeDue', 'wm-wake-due', { status: 'pending', availableAt: new RealDate(NOW).toISOString() })
+
+  longDelays = []
+  const res = await ctx.tools['memory__stage1_drain'].execute({})
+  const localNextMidnight = localMidnightPlus8('2026-09-14T00:00:00')
+  const expected = localNextMidnight - NOW // 14h
+  const utcNextMidnight = (() => { const d = new RealDate(NOW); d.setUTCHours(24, 0, 0, 0); return d.getTime() - NOW })() // 22h（旧口径）
+  console.log('  processed:', res.processed, '| 捕获到的长延时(ms):', JSON.stringify(longDelays))
+  console.log('  本地次日00:00 距 now =', expected, 'ms；UTC次日00:00 距 now =', utcNextMidnight, 'ms')
+
+  check(res.processed === 0, '预算耗尽 → 本轮不领取（processed=0）')
+  check(expected === 14 * 3600 * 1000 && utcNextMidnight === 22 * 3600 * 1000, '两个候选唤醒点可判别（本地 14h vs UTC 22h）')
+  check(longDelays.length === 1, `恰好安排了一次跨日唤醒（捕获 ${longDelays.length} 个长延时）`)
+  check(longDelays[0] === expected, `唤醒延时 = 本地次日 00:00 距 now（${longDelays[0]} ms，期望 ${expected}）`)
+  check(longDelays[0] !== utcNextMidnight, '唤醒延时 **≠** UTC 次日 00:00（旧实现在此必红）')
+}
+
+// ── [F] 对照：预算耗尽但**没有**到期作业 → 不安排跨日唤醒（守卫成立）─────────────
+console.log('\n[F] 对照：预算耗尽 + 无到期作业 → 不安排跨日唤醒')
+{
+  const { ctx, domain } = makeCtx({ get: () => undefined })
+  await apply(ctx, {})
+  NOW = localMidnightPlus8('2026-09-13T10:00:00')
+  await setMeta(domain, { runDay: localDayOf(NOW), modelAttemptsToday: 999, lastSuccessWatermark: '', lastPhase2At: '', phase2_last_error: '' })
+  // 只放一条**未到期**作业（available_at 在未来）→ hasDueStage1Job() 应为 false
+  await seedJob(domain, 'wakeFuture', 'wm-wake-future', { status: 'pending', availableAt: localMidnightPlus8('2026-09-15T00:00:00').toString() })
+  longDelays = []
+  const res = await ctx.tools['memory__stage1_drain'].execute({})
+  console.log('  processed:', res.processed, '| 捕获到的长延时(ms):', JSON.stringify(longDelays))
+  check(longDelays.length === 0, '无到期作业时不安排跨日唤醒（守卫成立）')
+  check(res.processed === 0, '预算耗尽 → 本轮不领取')
+}
+globalThis.setTimeout = realSetTimeout
+
 try { fs.rmSync(HOME, { recursive: true, force: true }) } catch {}
 
 console.log(`\n${failed === 0 ? 'ALL DAYKEY LOCAL-TIMEZONE TESTS PASSED' : failed + ' TESTS FAILED'}`)
