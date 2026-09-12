@@ -22,7 +22,11 @@ process.env.DSH_HOME = HOME
 const PLUGIN = new URL('../lib/index.js', import.meta.url).href
 const { apply } = await import(PLUGIN)
 
-const dayKey = (d = new Date()) => d.toISOString().slice(0, 10)
+// t121：日界口径已由 UTC 日改为**本机时区**日（本地 00:00 换日）。
+// 这里与被测实现保持同口径；**不要再**用 `toISOString().slice(0,10)`（那是旧行为，
+// 会在本地 00:00–08:00 之间与本插件写下的 runDay 不一致，造成假失败）。
+const dayKey = (d = new Date()) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 let failed = 0
 const check = (cond, msg) => {
   if (cond) console.log('  ✓ ', msg)
