@@ -2,6 +2,138 @@
 
 遵循《向 Codex 原版系统看齐》工程总纲 §19 工作纪律：每次变更记录对应需求、行为变化、测试与成熟度等级变化。成熟度等级（L0–L4）见总纲 §3。
 
+## 2026-09-13 · v0.1.11（t149）：S0-2 —— 去「截断当前权威文件后全文替换」，改「整篇读入 + 增量编辑」（GPT 大纲 §12）
+
+**缺陷（真实数据已触发）**：整合提示词用 `clampPromptInputs` 把「当前总纲 / 当前注册表」按 `PROMPT_CURRENT_SUMMARY_CHARS=12000` / `PROMPT_CURRENT_REGISTRY_CHARS=6000` **字符截断**后再让模型**全文替换**输出。截断点之后的独有结论**模型从未看到**，新版本里自然消失 = **静默丢结论**。实测（2026-09-13）：`MEMORY.md` 6,476 码点 > 6,000（约 10 分钟后涨到 7,406），**注册表侧已在被截**；总纲侧 7,486/7,605 < 12,000 尚未触线。
+
+### 变更（`lib/index.js`）
+- **当前权威文件不再截断**：`clampPromptInputs` 不再对 `currentSummary` / `currentRegistry` 调 `clampChars`，**整篇原样传入**提示词；`PROMPT_CURRENT_SUMMARY_CHARS` / `PROMPT_CURRENT_REGISTRY_CHARS` 标注为**退役**（保留常量仅为历史/兼容引用）。
+- **无法可靠表达 ⇒ 明确失败（fail-closed）**：新增 `PROMPT_CURRENT_HARD_MAX_CHARS = 200000` 与 `currentTooLargeDiagnostic()`；`processPhase2Batch` 在组装提示词前先判整篇长度，**超硬顶直接 `failPhase2Batch('current-version-too-large: …')`**，绝不静默砍尾。
+- **提示词改为「增量编辑」契约**：新增 `## INCREMENTAL MERGE (HARD …)` 段（当前文件是**被编辑的基线**、不得整篇重写、旧有持久结论必须带进新文件除非 exclusion 移除、输出完整文件而非 diff）；开场句改为「shown IN FULL (untruncated)」。
+- **截断可观测（写进作业结果）**：`clampPromptInputs` 新增返回 `clampedInputs` / `incrementalCharsCut` / `perInputLimit` / `truncatedCurrent`（恒 false）/ `currentChars`；新增纯函数 `truncationReportOf()`，把每批的截断事实整理为 `{ truncated, currentFilesTruncated, currentCharsCut, currentChars, incrementalInputs:{count,charsCut,perInputLimit}, droppedInputs }`，由 `buildConsolidationPrompt` 经 `opts.truncationOut` 回填、`processPhase2Batch` 以 **`truncation`** 字段随**作业结果**返回（不再只有模型能在提示词里看到）；提示词里若有增量输入被截断会明写一行 note。
+- **注册表与总纲同等待遇**：新增 `currentRegistryOverCap()` / `currentOverCapWhich()`；`enqueueCompressBatch` 的门由「仅总纲超限」改为「**总纲或注册表**超限皆可触发」（仍**只由显式入口**调用，调度器与自动路径永不创建 compress 批）。
+- **丢结论检测（可观测非阻断）**：新增纯函数 `normalizeConclusionLine()` / `droppedDurableConclusions()`；发布前逐行核对「旧权威文件里的结论行在新文件里仍有落点（归一化完整子串，或 token 覆盖率 ≥0.8；exclusion 命中豁免）」，**数量记入返回字段 `droppedConclusions` 并 `console.warn`，但不阻断发布**（合并/改写是合法操作；compress 批豁免）。注：曾试过把它做成硬失败，实测会把 14 个既有测试判死 ⇒ 改为可观测。
+
+### 测试
+- 新增 `test/s0-2-authoritative-file-truncation.test.mjs`（**GPT §12 硬判据**）：把独有结论放在注册表 **offset > 6000 的尾部**，模型只回显「它在提示词里看到的当前文件 + 一条新结论」，断言该尾部结论**仍在提示词里、且仍在发布版（根镜像与版本目录）里**，并反驳"原样拷贝/原地覆盖"两种自欺。
+- 新增 `test/s0-2-hard-max-failclosed.test.mjs`：整篇超硬顶时**模型零调用** + 批记录带 `current-version-too-large` + 根文件**字节零变化**（修复前该场景会把 200,565 码点塌成 19 码点并丢尾部结论）。
+- 新增 `test/s0-2-compress-gate-parity.test.mjs`：**只有注册表**超上限也要开 compress 门（同等待遇），并含"只有总纲超限"的反向 sanity。
+- 新增 `test/s0-2-truncation-observable.test.mjs`：批结果里必须有 `truncation`，且「是否截断 / 截断字符数 / 截断文件」三项齐备；含"全在限内 ⇒ truncated=false"的反向用例。
+- **检验效力**（把上述测试与 §12 测试跑在修复前代码 `git show 73f89ae:lib/index.js` 上）：§12 测试 **3 条断言红**；hard-max **5 条红**；compress-gate-parity **1 条红**；truncation-observable **13 条红**（均 exit 1）。修复后 4 个 s0-2 测试文件全绿。
+- 既有 `test/t80-gate.test.mjs` 的 2 条断言原为「currentSummary 截到 12000 / currentRegistry 截到 6000」——**该行为正是 S0-2 要废除的**，已就地改为断言**相反的不变量**（整篇原样传入 + `truncatedCurrent` 恒 false + `currentChars` 如实 + `clampedInputs` 可观测）。
+- 回归：`pwsh -NoProfile -File test/run-tests.ps1` → **56/56 全绿**（= t144 后的 52 + S0-2 新增 4）；`node --check lib/index.js` 通过。
+
+### 成熟度
+S0-1（冻结点分批）+ S0-2（权威文件不截断 + 增量编辑 + fail-closed）+ t164（自动续跑/旧批兼容/完整请求预算）合上「输入侧静默丢内容」这一族。**未 commit、未 push、未重启**。
+
+### 追加（同日 · t164，按 GPT《设计答复评审 R1》§5/§6 补验收边界）
+同版本内继续，**未重做**已修部分。
+- **自动续跑（§5.2，补 S0-1 的缺口）**：旧 `nextPhase2WakeAt` 只扫**已创建作业**，看不到"尚未绑定"的残余来源 ⇒ 第一批跑完后第 21 条**没有任何唤醒入口**。新增 `phase2WakePlan()`（把 `immediate-unbound-work` / `due-batch` / `backoff` / `none` 分开，并暴露 `wake` 到返回值）+ `armPhase2Wake()`（4 处唤醒点统一改走它），并以 `hasImmediatelyProcessableWork()` 判定残余。**有界**：每次唤醒都领到 ≥1 条的批并消费掉，残余单调减少；继续条件 = 残余 > 0，退出条件 = 残余 = 0 或已有活跃批；单飞 `phase2Busy` 吸收重入。实测：21 条只调一次工具 ⇒ 第 1 批 20 条 + **自动**第 2 批 1 条，27ms 内 21/21 消费，2 批全 committed，残余清零后不再新开批。
+- **旧超限批兼容（§5.3）**：新增纯函数 `splitBatchIdsByBudget()`。① **升级期检测**：`reconcilePhase2Bindings` 对**非终态**且 `input_ids > PROMPT_MAX_INPUTS` 的旧批告警（只报不切）。② **领取侧截批**：`claimNextPhase2Job` 的 pending/retry_wait 分支保留前 20 条、其余**解绑 + 保持未消费**留队，并记 `legacy_split`。③ **提交侧守卫**：`commitPhase2Batch` 只把前 `PROMPT_MAX_INPUTS` 条标已消费，超出的**放开绑定**留待重领 —— 覆盖 `prepared`/`published`（**不盲切其 input_ids**，按原有发布记录恢复）。实测：21 条旧 `retry_wait` 批 → 截批 20 + 延后 1（最终 21/21）；21 条旧 `published` 批 → `input_ids` 仍 21（未切）、补提交不重跑模型、只消费 20，未见来源被放开并最终重领处理。
+- **诊断降级（§6.2）**：`droppedDurableConclusions` → **`diagnosePossibleConclusionLoss`**，改为**可选诊断**（新配置 `phase2Diagnostics`，默认 **false**）；关闭时完全不跑；开启时结果进返回体 `diagnostics`（含 `advisory:true` / `persisted:false` / 能力边界 note）并告警。**不调阈值、不升为硬闸门**；**未持久化**（不写 `phase2_jobs`），如实声明。**提示词纠偏**：删掉「丢结论 ⇒ 批次被拒绝」这句与程序实际（只告警不阻断）不符的表述，改为把责任落到模型侧并明写程序**无法判断语义是否有损**。
+- **完整请求预算（§6.3）**：新增 `REQUEST_HARD_MAX_CHARS = 200000`（**未放大**）+ 纯函数 `estimateRequestChars()` / `requestTooLargeDiagnostic()`。单文件上限仍作**组件级早退**（`current-version-too-large`）；新增**整请求**预算 = 两份旧文件之和 + 全部 `memory_changes` + 增量输入 + 提示词骨架 + **输出预留**（两目标文件上限之和）。超预算 ⇒ **明确失败** `request-too-large: total=…>200000 (各分量)`，**模型零调用、旧文件字节零变化**。实测两份各 12 万码点（各自合法）⇒ 明确失败；预算内批返回 `request` 构成。
+- **S0-2 表述边界（§6.1/§6.3）**：提示词与报告只声明「**输入完整性**」（程序把整篇当前文件交给了模型），**不冒充**"真实模型语义合并不会遗漏"；明写程序无法判断语义损失。
+- **测试**：新增 `t164-auto-continue` / `t164-legacy-batch` / `t164-request-budget` / `t164-diagnostics` 4 个文件；回归 **60/60 全绿**。
+
+### 追加（同日 · t170）：修事故级缺陷——`failed_terminal` 批的未消费输入**永久卡死**
+- **缺陷链路**：`claimNextPhase2Job` 的 `if (o.phase2_batch_id) continue` ⇒ 绑定即**永不再选**；而 `reconcilePhase2Bindings` 的 orphan 判据是 `!j && !archived`（只释放"批**不存在**"的绑定），**failed_terminal 批仍在表里** ⇒ **永不释放**。原实现是**有意为之**（注释理由：防"terminal→解绑→新建批"无限烧 LLM），代价是这些来源**永久卡死且无人登记** = **静默不消费**。真实数据：**8 条** failed_terminal（旧安全门 `unredacted secret`，09-13 02:43–03:51），**11 条输入**全部卡死。
+- **修法（有界释放 + 显式登记）**：`reconcilePhase2Bindings` 新增 `releaseFromFailedBatch` —— 批为 `failed_terminal` **且**输出未消费（`selected_for_phase2 !== true`）⇒ 释放绑定（可重选）；每条输出记 `phase2_release_count`；达 **`MAX_PHASE2_RELEASES = 3`** 后置 **`phase2_abandoned = true` + `phase2_abandoned_reason`**（显式登记、不再重选、`console.warn` 汇总计数）⇒ **既解除卡死，又消掉原实现担心的无限振荡**。
+- **不破坏既有语义**：`committed` 批的输入**不释放**；`running`/`prepared`/`published` **不动**；原 orphan（批不存在）释放逻辑**保留**。
+- **配套**：`stage1_outputs` schema 增 `phase2_release_count` / `phase2_abandoned` / `phase2_abandoned_reason`；`claimNextPhase2Job` 与 `hasImmediatelyProcessableWork` 均**跳过 abandoned**（后者尤其重要：否则已放弃的来源会被当成"立即可处理"，造成立即唤醒空转）。
+- **契约改向（2 处既有断言按新契约改写，非放水）**：`invariant-recovery` 的「failed_terminal 批 input B **仍绑定**、B **未被消费**」→ 改为「B **已解绑**（release_count=1）、**被重新入队并消费**、未达上界不标 abandoned」；`p0-9` T4 的「下一轮 no-change / 0 次 LLM」→ 改为「释放后**有界重试一次**（恰好 1 次 LLM，非忙循环）」。
+- **测试**：新增 `t170-stuck-binding-release`（① 释放→可重选并消费 ② 达上界⇒显式 abandoned 且不再重选、批数不增 ③ **反例**：committed 批绑定不动）；回归 **61/61 全绿**。
+- **生效条件**：**需重启才生效**（当前运行进程加载的是重启前那版）。未 commit、未 push。
+- **还原口**：`lib/index.js.pre-stuckfix-2026-09-13`（= 改前 `AF7D34BA…` / 286,366 B，脱离 `*.bak-*` 族）。**退出条件**：用户重启当前实例、确认卡死项已清后，由 `G-维护` 清掉。
+
+### 追加（同日 · t172）：同族残余——**已归档**的 `failed_terminal` 批同样卡死其未消费输入（真实 5 例）
+- **缺陷链路**（两条释放路径**都**跳过归档批）：`unbindOrphan` 的 `orphan = !j && !archived` ⇒ 批在归档表就不释放；`releaseFromFailedBatch` **只查活跃表** `phase2JobsTable` ⇒ 批已归档 ⇒ `!j` ⇒ 直接 return。⇒ 归档失败批的未消费来源成**静默死角**；且唤醒计划只看"无绑定的残余"，它们有绑定 ⇒ **没有任何其它调度事件时 reconcile 永不运行 ⇒ 重启也不解除**。真实 5 例；未消费口径 = 11（t170）+ 5 = **16 条**。
+- **修法**：① `releaseFromFailedBatch` 改查 **活跃表 ‖ 归档表**（`const j = live || archived`），判据仍是 `status === 'failed_terminal'` 且未消费；上界/`abandoned` 语义沿用，并新增 `releasedArchived`/`abandonedArchived` 计数进告警（**显式点名归档来源**）。② 新增纯函数 `immediatelyProcessableKind()`（`hasImmediatelyProcessableWork` 变薄封装），把 failed_terminal 批 id（**活跃 + 归档**）交给判据：绑在失败批上的未消费输出**也算"立即可处理"**，唤醒理由为 `immediate-failed-bound-work` ⇒ **即使没有任何工具调用/其它调度事件，启动后也会自动跑一轮 reconcile 把它放出来**。
+- **归档动作的选择**：**不在 `archiveVault` 里加释放分支**，而是让归档后由 reconcile 正常处理 —— 理由：归档是运维/清理路径，往里加业务释放会引入"归档成功但释放失败"的不一致来源；而 reconcile 是每次 phase2 调度的第一步，配合 ② 的唤醒条件，归档后**一定会被处理**。归档记录仍可查（`restoreTable` 可恢复），信息不丢。
+- **测试**：新增 `t172-archived-failed-release`（6 组 / 24 条断言：纯函数判据、归档 failed ⇒ 释放并消费、达上界 ⇒ abandoned、**反例** 归档 committed / published ⇒ 不释放、**端到端：一次工具都不调、仅靠启动唤醒 34ms 自动解除**）；回归 **62/62 全绿**。
+- **还原口**：`lib/index.js.pre-archfix-2026-09-13`（= 改前 `28A2CA90…` / 290,463 B，脱离 `*.bak-*` 族）。**退出条件**：用户重启当前实例、确认那 5 条归档卡死已解除（或已显式 abandoned）后，由 `G-维护` 清掉。
+- **部署**：编辑会破坏 HardLink ⇒ 已**显式 `Copy-Item`** 覆盖部署副本；三处 SHA 全等 `86F57EA7…` / 293,685 B。**需重启才生效**。
+
+### 追加（同日 · t175）：第三档卡死——绑 `failed_terminal` 批的未消费 **`memory_changes`** 永不释放（真实 0 例，结构性就位）
+- **根因（一句话）**：把"批终态失败 ⇒ 释放绑定"做成了**产物专用** —— 缺的是**变更侧那次调用**（老机制少覆盖一张表）。三处表现：① 领取侧 `if (ch.status !== 'pending' || ch.phase2_batch_id) continue`（**L3471** 区）跳过已绑定者；② 释放循环**只遍历 `stage1OutputsTable`**（t170/t172 的 `releaseFromFailedBatch`）；③ 唤醒判据的 change 分支要求 pending **且无绑定** ⇒ 这一档不触发 reconcile。而 `unbindOrphan` 本来就是**双表通用**的。
+- **影响面**：真实 **0 例**（`memory_changes` 5 条 + `changes_archive` 16 条全部 `consumed`、`pending=0`）；但触发前置都在正常路径内（建批时存在 pending 变更行 × 该批转 `failed_terminal`），**变更不参与 `PROMPT_MAX_INPUTS` 裁剪** ⇒ 一旦触发单批可**静默丢多条**，且无上界/无 abandoned/无告警。
+- **修法**：① 释放核心泛化为 `releaseBoundFromFailedBatch(table, key, rec, isConsumed, kind)`（**L3256**），**产物与变更各跑一遍**（**L3290 / L3296**），口径与 `unbindOrphan` 对齐：**双表（活跃 + 归档）+ 同套上界 + abandoned 登记**；② `immediatelyProcessableKind` 的 change 分支补 `failed-bound` 档（**L420**），并排除已 `abandoned` 的（**L417**）；③ 领取循环跳过 `phase2_abandoned` 的变更（**L3471**）；④ `memoryChangeSchema` 加**同套字段名** `phase2_release_count`/`phase2_abandoned`/`phase2_abandoned_reason`（**L581-583**，选择"沿用同套"而非另立：同语义、同套测试/工具、`unbindOrphan` 的双表写法可直接延用）；⑤ 告警扩展为**产物 + 变更**双侧计数（**L3300**，含 archived 细分）。
+- **测试**：新增 `t175-change-side-stuck-release`（6 组 / 20 条断言：纯函数 failed-bound 档、pending×绑活跃 failed ⇒ 释放并 `consumed`、pending×绑**归档** failed ⇒ 同样释放、**反例** 已 `consumed` 不误伤、上界 3 ⇒ abandoned 不再重试、**端到端：一次工具都不调、仅靠启动唤醒 33ms 自动解除**）；回归 **63/63 全绿**。（顺带：`t172` 里那条"告警点名归档来源"的断言随文案升级改为 `/archived:\s*1\s*input\(s\)/`，**行为未变**。）
+- **还原口**：`lib/index.js.pre-changefix-2026-09-13`（= 改前 `86F57EA7…` / 293,685 B，脱离 `*.bak-*` 族）。**退出条件**：用户重启当前实例、确认卡死项已清后，由 `G-维护` 清掉。
+- **部署**：编辑破坏 HardLink ⇒ 已**显式 `Copy-Item`** 覆盖部署副本；三处 SHA 全等 `6C4461F9…` / 295,964 B。**需重启才生效**。
+- **提示**：`lib\*.pre-*` 现共 **3 个**（t170 `pre-stuckfix` + t172 `pre-archfix` + 本批 `pre-changefix`）⇒ **建议下次重启确认后统一清掉**，不再堆积。
+
+### 追加（同日 · t178）：启动期写锁竞争不再把一次调度 pass 丢掉（error → 短退避重试 + warn）
+- **现象**（用户启动日志）：`stage-1 drain error: … another write is in progress — retry shortly` 与 `phase-2 wake drain error: …`。
+- **成因**：`withWrite`（**L2006**，冲突分支紧随其后）是**非队列锁**——`writeBusy` 为真**直接抛**（无内部重试）。启动块里同时起多条写路径：`setImmediate` 的 stage1 drain（**L2501-2503**）、0ms 的 phase2 wake 定时器（**L3821-3824**）、`setImmediate` 的 phase2 auto（**L3213-3219**），以及**被 await** 的启动 `reconcilePhase2Bindings`（**L5026**，同块还有 `scheduleStage1Drain` L5021 / `armPhase2Wake` L5023 / `requestPhase2Integrate` L5033）⇒ 调度那几条撞上正在持锁的 await 者。真实存储写是异步慢写 ⇒ 锁跨越 macrotask ⇒ 必然偶发。
+- **不是纯噪音（实测）**：落败路径的 catch **只 log、不重新武装** ⇒ 没有别的触发时，那一次 pass 的工作被**无限期拖延**。加"存储写延迟"模拟后复现：修前 3 次里出现 1/1/**2** 条 error，其中一次 **0/3 消费、0 次 LLM**（整轮工作丢掉）。
+- **修法**：新增导出纯函数 `isWriteConflictError()`（**L391**）+ 常量 `WRITE_CONFLICT_RETRY_MS=200` / `MAX_WRITE_CONFLICT_RETRIES=5`（**L397-398**）+ 调度包装 `runScheduledPass(label, key, run)`（**L2480**）：**识别冲突 ⇒ 短退避重试（有界 5 次，成功即清零）**，并把日志**从 error 降为 warn**（写明第几次/何时重试）；非冲突错误仍按 error。三处调度点全部接入：stage1 drain（**L2503**）、phase2 auto（**L3219**）、phase2 wake（**L3824**）。
+- **修后实测**（同探针同延迟 ×3）：**0 条 error**、1–2 条 `write lock busy — retry n/5` warn、**始终 3/3 消费**。
+- **测试**：新增 `t178-write-lock-conflict`（**8** 条断言 = `isWriteConflictError` 4 条 + 启动期竞争「0 error / 3/3 消费」4 条；**原记「10 条」系我的误计，t182 更正**）；回归 **64/64 全绿**。
+- **还原口**：`lib/index.js.pre-locknoise-2026-09-13`（= 改前 `6C4461F9…`，脱离 `*.bak-*` 族）。**退出条件**：用户重启确认后与其他 `pre-*` 一起清掉。
+- **部署**：编辑破坏 HardLink ⇒ 已**显式 `Copy-Item`** 覆盖部署副本；三处 SHA 全等 `E3C238F7…` / 298,574 B。**需重启才生效**（现行 3518 pid 46928 起于 17:48:04，加载的是 `6C4461F9`）。
+
+### 追加（同日 · t180）：补齐第 4 处调度写路径 + 穷举同类（确认无第 5 处）
+- **补的这处**：`scheduleStage1Wake` 的定时器（原 **L2513-2518**，`drainStage1Jobs().catch(只 log)`）与 `scheduleStage1Drain` 调的是**同一个** `drainStage1Jobs()`，却只有后者被包 ⇒ 现改走 `runScheduledPass('stage-1 wake drain error', 'stage1-wake', …)`（**L2518**），与 **L2503** 对齐。**唯一 `lib` 改动**；日志格式不变（仅写锁竞争降为 warn + 重试）。
+- **穷举结论**：全库 `setImmediate`/`setTimeout`/`setInterval` 共 **7 个真实定时器位点**（**原记「6 个真实回调」、并把 `wait` 记在 L2530 —— 均系误计，t182 更正**：漏计了 `runScheduledPass` 内部的重试载体 L2491），其中**起写**的 4 个 = stage1 drain(L2503) / stage1 wake(**L2518**) / phase2 auto(L3220) / phase2 wake(L3825)，**现已全部走 `runScheduledPass`**；另 3 个不起写或按设计吞错（**L2531** `wait` 工具、L2042 心跳：租约 60s ≫ 心跳 20s，设计如此、且与调度 pass 不同类、L2491 重试载体）。**同一类的第 5 处：没有。**8 处"awaited 启动写 / 工具内写 / 事件入队写"虽同样只 log，但**要么在武装之前跑、要么是持锁的赢家、要么根本不用这把锁** ⇒ **形态相似但暴露面不同**（报告中逐处标注）。
+- **测试**：扩充 `t178-write-lock-conflict`（断言 **8 → 10**；**原记「10 → 12」，真实起点是 8，t182 更正**）：新增**确定性**场景「不冲突时零重试」（有竞争的 ② 场景仍证明「冲突⇒重试并最终成功」）；连跑 3 次全过。回归 **64/64 全绿**（未新增测试文件）。
+- **关于第 4 处的可复现性（如实）**：**未能**稳定把竞争单独压到这条入口上 —— 因为两个入口最终都调 `drainStage1Jobs()` 而它是**单飞**的（在飞时后者直接返回 0，不去抢锁）⇒ 本处价值是**静态对齐**（与 C 报的"3 次 0/3 未复现"一致），报告未包装成"已复现"。
+- **登记（不删）**：`lib\*.pre-*` 现 **6 个**，其中 **`pre-assertdecouple` ≡ `pre-locknoise`（SHA 均 `6C4461F9E531899C`，逐字节相同 —— 因 t177 只改测试未动 lib）** ⇒ 重启后统一回收时**这两个只需留 1 个**。`lib\*.bak*` = 0。
+- **部署**：显式 `Copy-Item` 覆盖后三处 SHA 全等 `7E5A5334…` / 298,863 B。**需下次重启才生效**。
+
+### 追加（同日 · t182）：补上 L2518 接线的 2 条锚点断言 + 更正两处断言计数误记
+> 本节行号对应 `lib/index.js` SHA `7E5A5334BEF57F1F888062CE1D46A5917639A3850812B7C378EACB61F8078639`（298,863 B）；文件若有变动须重算。
+
+- **起因（C-脚本环境 t181 复核发现）**：t180 声称"断言 10 → 12"**不成立** —— `check(` 实测**只有 10 条**，而 t180 改的那处（`scheduleStage1Wake` 定时器体 → `runScheduledPass('stage-1 wake drain error', …, 'stage1-wake', …)`，**L2518**）**零测试覆盖**。⇒ 本批补上缺的 2 条。
+- **补的 2 条**（`test/t178-write-lock-conflict.test.mjs` 新增场景 ④，**源码级锚点**——因为行为型断言压不到这条入口，两个入口共用**单飞**的 `drainStage1Jobs()`）：① 源码里**存在** `runScheduledPass('stage-1 wake drain error', …, 'stage1-wake', …)`；② 源码里**不存在**旧形态 `drainStage1Jobs().catch(只 log)`。
+- **牙齿（可复跑）**：把 `lib/index.js` 换成改前版本 `E3C238F7…`（`lib/index.js.pre-wakepath-2026-09-13`）跑该测试 ⇒ **2 条红 / `2 TESTS FAILED` / exit 1**，其余 10 条绿 ⇒ 锚点**确实锁住 t180 的改动**。
+- **计数口径更正（含我自己的错）**：`t178` 初版 = **8** 条（原记「10 条」）；`t180` = **8 → 10**（原记「10 → 12」）；本批 = **10 → 12**（`check(` 实测 **12**）。**上面 t178/t180 两节的错记已就地更正。**
+- **定时器位点口径更正**：全库 **7 个**真实定时器位点（原记「6 个真实回调」：漏计 `runScheduledPass` 内部的重试载体 **L2491**；`wait` 在 **L2531** 而非 L2530）。**起写口径不变**：4 处 = L2503 / L2518 / L3220 / L3825，**现全部走 `runScheduledPass`**；**同一类的第 5 处仍为「没有」**（结论不因计数更正而变）。
+- **测试 / 回归**：单跑该文件 **12 ✓ / 0 ✗ / exit 0**、**连跑 3 次全过**；`pwsh -NoProfile -File test/run-tests.ps1` → **ALL 64 TESTS PASSED / exit 0**（未新增测试文件）；`node --check lib/index.js` exit 0。
+- **改动面**：本批**只改测试**，`lib/index.js` **未动** ⇒ 三处 SHA 仍 `7E5A5334…` / 298,863 B；部署副本仍按契约**显式 `Copy-Item` 覆盖并复核三处一致**（顺带查清：工作区与部署副本**不在同一 inode**、部署两份互为硬链接 ⇒ 编辑工作区**不会**连带更新部署副本，这就是"必须显式覆盖"的由来）。`test/` 不在部署范围。**未 commit / 未 push / 未重启。**
+- **还原口**：本批真正的还原口 = `test/t178-write-lock-conflict.test.mjs.pre-assertanchor-2026-09-13`（追加前的 **10 断言版**，实跑 10 ✓ / exit 0）；另按契约第 5 条保留 `lib/index.js.pre-assertanchor-2026-09-13`（**= 现行 lib 逐字节副本 ⇒ 零信息量**，回收时可先删）。**退出条件**：用户重启确认后与其他 `pre-*` 一并清掉。
+
+### 追加（同日 · t187）：① 受限执行者的**接口层**落地（整合执行体改插件自建会话）+ 相位 2 租约 3600s
+> 本节行号对应 `lib/index.js` SHA `A644E683CCF217606EC6883F247EA4F4347E8A055487D3797362D26484500D9A`（311,190 B）；文件若有变动须重算。
+
+- **接口层（本批落的就是"接口层"，不搬模型调用）**：新增 `consolidationExecutorSpec(memoryRoot)`、`applyExecutorSessionPolicies({ctx,handle,spec})`、`startConsolidationExecutor({ctx,memoryRoot,sessionId})`；`processPhase2Batch` 在**模型调用前**先建**插件自建会话**（`ctx.agents.create({ sessionId, meta:{ cwd: <记忆根> }, setup })`，setup 内 `tools.restrict({ allow:['read','write','edit','glob','grep'], deny:['subagent'] })`），并把该会话钉成沙箱 `workspace-write` + 审批 `never`（优先走 `sandboxPolicy.setMode` / `approval.setPolicy`，服务缺失则直接 append 同名会话事件）。**为什么不是子代理工具**：`SubagentStartRequest` 没有 `cwd` 字段（子代理会话恒继承父 workspace）—— t186 定案。
+- **失败不拖累批**：宿主无 `agents` 服务或建会话抛错 ⇒ 只 warn，继续走既有单次 JSON 路径；配置 `consolidationExecutor: false` 可整体关掉（逃生阀）。
+- **租约**：`PHASE2_LEASE_MS` **60s → 3600s**（照 codex `JOB_LEASE_SECONDS = 3_600`，镜像 `codex-rs/memories/write/src/lib.rs` L84）；心跳仍 20s。重启后旧批仍被 `foreign-owner` 路径立即收回（`bootId` 每次 apply 重新生成）。
+- **残余面（不掩饰）**：**无网做不到** —— DSH 沙箱没有网络维度，只由工具白名单近似，**不是硬边界**（代码常量 `CONSOLIDATION_NETWORK_RESIDUAL` 载明此点）。
+- **测试 / 回归**：新增 `test/t187-restricted-executor.test.mjs`（6 组 / **33 断言**），改前树（`lib/index.js.pre-executor-2026-09-13`）**11 条红**；回归 **ALL 65 TESTS PASSED**；三处 SHA 全等 `A644E683…`；`node --check` exit 0。
+- **未通过项（必须记住）**：`meta.cwd` 能否被**真实宿主**接受 = 实现时第一验收项，**需重启后实测，尚未通过**；若失败，退路 = 有界工具循环（12 轮 / 整批 10 分钟 / 租约 1h）。
+
+### 追加（同日 · t189）：② 两道启动门槛 + 启动顺序对齐（抄 codex）+ 只对根会话生成
+> 本节行号对应 `lib/index.js` SHA `5757528CA0C8ED2F87A6188E78385035F1FB92D37049EF46C720F7778A95A361`（322,903 B）。
+
+- **门槛一 · 每启动来源上限**：新增配置 `maxSourcesPerStartup`（默认 **2**，范围 1–128；抄 codex `DEFAULT_MEMORIES_MAX_ROLLOUTS_PER_STARTUP = 2`，镜像 `codex-rs/config/src/types.rs` L50/L317-319）。实现上把上限**绑在启动那一趟 drain** 上（`scheduleStage1Drain(maxSources)` → `drainStage1Jobs({ maxSources })`），其余调度者（事件 / 唤醒 / 显式工具）**不传 ⇒ 不设限**；到顶后下一趟至少隔 `STARTUP_SOURCE_SPACING_MS = 30000`（抄 codex「下个启动窗口再继续」，不立刻补跑，否则上限形同虚设）。剩余来源不丢。
+- **门槛二 · 额度门**：新增配置 `minRemainingQuotaPercent`（默认 **25**；抄 codex `DEFAULT_MEMORIES_MIN_RATE_LIMIT_REMAINING_PERCENT = 25`，同文件 L53/L322-324）+ 纯函数 `bootQuotaPlan()`：`已用% ≤ 100 − 阈值` 才放行 ⇒ **剩余恰好等于阈值也放行**（浮点加 1e-9 容差）。自动路径在 `phase2Integrate` 入口判门，不过则**不启动新整合**并把唤醒排到**下一个本地日边界**（不忙循环）；**在途批次（published/running/prepared）不拦**（那是收尾不是开工）；**显式 `memory__phase2_integrate` 绕过此门**（`{ manual: true }`）。
+- **启动顺序对齐 codex**：镜像 `codex-rs/memories/write/src/start.rs` L59-92 —— **先做不耗额度的 prune/清理**（遗留状态归档 → stage-1 迁移 → 过期租约回收 → change-outbox 半提交修复）**再**进两道门；顺序在代码里以编号注释标出。
+- **只对根会话生成**：新增纯函数 `isRootSessionHeader()`；`session/disposed` 入队前判血缘（`parentSession` / `origin==='subagent'` / `delegationDepth>0` ⇒ **不入队**），对齐 codex `start.rs` L33-38 排除非根会话。**未知血缘 ⇒ 视为根会话**（保守：不因读不到血缘就停掉记忆生成）—— 此点如实登记。
+- **契约改向（1 处既有测试按新契约改写，非放水）**：`test/drain-quota.test.mjs` 的「drain 产出后自动触发 1 次整合」改为「额度耗尽（剩余 0% < 25%）⇒ 自动整合被额度门拦住 = 0 次」。
+- **测试 / 回归**：新增 `test/t189-boot-gates.test.mjs`（6 组 / **25 断言**），改前树（`lib/index.js.pre-bootgate-2026-09-13`）**17 条红**；回归 **ALL 66 TESTS PASSED**；三处 SHA 全等 `5757528C…`；`node --check` exit 0。
+- **t191 收口（t190 发现②，选 A：让启动上限成为每次启动的**真约束**）**：启动来源预算从"一趟一个数字"改为**可继承的预算对象**（`scheduleStage1Drain({ remaining })`；**busy-rerun 补跑趟继承在飞那一趟的剩余预算**、同一对象继续扣减；`scheduleStage1Drain` 早退时**合并**预算而不是丢掉）⇒ 补跑趟**不再绕过启动上限**，预算耗尽仍走 30s 间隔唤醒（间隔照旧生效）。新增 `test/t191-boot-budget-rerun.test.mjs`（含牙齿：还原口树（`5757528C…`）上必红）。**t190 发现①（账目）**：本文件上一行的「23 断言」已更正为 **25**（运行时 ✓25 / 静态 `check(`=25 / 分组 5+6+4+5+1+4=25 三处自证）。
+- **未做**：仍未把整合的**模型调用**搬进受限会话（属下一批，且须先过 t187 的第一验收项）。
+
+### 追加（同日 · t193）：修「工具返回体违声明 schema（`wake`）」+ 穷举 `memory*` 工具返回体一致性 + 补宿主 schema 校验测试
+> 本节行号对应 `lib/index.js` SHA `65DD012BE6D69E95955E3AA56CB7F36FB5D1B6828CAC7A44A9E35881713FCC77`（329,458 B）；宿主校验器行号对应实际加载副本 `dsh-tools/lib/index.js`。
+
+- **真机现象（队长实测逐字）**：`memory__phase2_integrate` 报 `returned invalid output: "value.wake" is not a declared property (additionalProperties: false)`；副作用为零（整合没跑，是输出校验层判非法）⇒ 该工具对模型不可用，而它又是**额度门唯一的绕过入口**。
+- **归因**：返回体多出 **4 个未声明字段** —— `wake`（t164 自动续跑，4 条返回路径都带）、`truncation`（S0-2 截断可观测）、`request`（t164 §6.3 完整请求预算）、`diagnostics`（t164 §6.2 可选诊断）；另 `quota`（t189 额度门）属同一函数返回面但工具路径不可达。**旧单测没抓到**：它们直接调 handler 断言字段值，**从不经过宿主 `dsh-tools` 的输出校验层**。
+- **修法**：① `wake` **从返回体裁掉**（内部调度状态；`armPhase2Wake()` 副作用保留，"何时再醒"仍可从 `phase2_jobs.available_at` 观测）；② `truncation`/`request`/`diagnostics`/`quota` **如实补进声明 schema**（前三项是已验收的可观测契约，裁掉会回退）；③ `diagnostics` 关闭时**不返回该键**（宿主方言不支持 null 型对象属性，保留 `null` 会让默认配置照样被拒）——`test/t164-diagnostics.test.mjs` 的对应断言按新契约改写（**契约改向，非放宽**）。
+- **穷举**：10 个 `memory*` 工具逐一核对 ⇒ **只有 `memory__phase2_integrate` 违约**（其 5 个字段全部处理）；其余 9 个一致。顺带登记：本插件 schema 用的**属性级 `required: true` 宿主不认**（只认顶层 `required` 数组），属惰性装饰，本批未改（避免在未驱动分支引入新拒绝）。
+- **测试（牙齿核心）**：新增 `test/t193-tool-output-schema.test.mjs` —— 内置**宿主等价** schema 校验器（含 `additionalProperties: false` 语义与同款文案），对**每个** `memory*` 工具的真实返回体逐样本校验；`memory__phase2_integrate` 取早退/恢复/处理三条路径。当前树 **✓34 ✗0 / exit 0**；还原口树（`4B299C86…`）**exit 1 / ✓31 ✗3**（真机那条 `wake` 在内）。
+- **回归**：**ALL 68 TESTS PASSED**（基线 67 + 新增 1）；`node --check` exit 0；三处 SHA 全等 `65DD012B…`。**未 commit / 未 push / 未重启**（现行进程仍加载 `4B299C86…` ⇒ 该工具在真机上仍报错，直到下次重启）。
+
+### 追加（同日 · t195）：④ 生命周期照 codex 对齐 —— 30 天未用**失格** + `usage_count` 降序（撤销 freshness 软降权）
+> 本节行号对应 `lib/index.js` SHA `4EB510793991E3E98BA459041183461BB23AAB97A7F636B60E25086078A06B22`（338,789 B）；codex 依据取自本地镜像 `_ref-codex\`（提交 `a592c38c…`）。
+
+- **依据（镜像逐字）**：`codex-rs/state/src/runtime/memories.rs` **L439-446**（资格+排序文档：`last_usage` 在 `max_unused_days` 内，**或**从未用过时 `source_updated_at` 在该窗口内；排序 `usage_count DESC, COALESCE(last_usage, source_updated_at) DESC, source_updated_at DESC, thread_id DESC`）、**L459**（cutoff）、**L473-477**（WHERE 资格）、**L479-482**（ORDER BY）、**L70-80**（`usage_count = COALESCE(usage_count,0)+1, last_usage = now`）；`config/src/types.rs` **L55**（`max_unused_days = 30`）。
+- **改了什么**：① 新增 `entryEligible()`（**30 天未用即失去资格**；`forgotten`/`superseded` 仍最高优先；负数窗口按 0）；② `entries` 新增 **`usage_count` / `last_usage`**（schema 默认 0 / ''，**旧数据读时补默认、不迁移、不重写**）；③ 召回资格改**硬淘汰**（L5186-5187）、排序**首键 = `usage_count DESC`**（L5188-5194 区）；④ **撤销降权**：`scoreMemory` 只返回相关性、`freshnessWeight` 标 `@deprecated` 不再参与；⑤ 配置项 `maxUnusedDays`（默认 30）。
+- **使用计数（设计）**：`memory_recall` 真正交付给模型的条目异步累加（`setImmediate` + **`runScheduledPass`**（t180 纪律）+ `withWrite` + **`get`+`put`**，**10 分钟去抖**）；`usage_count` **只作排序键、不作资格判据**。**偏差如实登记**：codex 的计数由**引用解析**驱动（`citations.rs`），本地无该信号 ⇒ 用"被交付"近似。
+- **契约改向（非放宽）**：`phase-c-lifecycle` [7] 与 `phase-c-recall` [1] 原断言「stale 只被降权 / 排第二」→ 改为「stale **失格**」；`phase-c-recall` 的"recall 只读"改为"**调用本身**不写，计数是异步写" + 新增"异步计数已落盘"断言。
+- **测试 / 回归**：新增 `test/t195-codex-lifecycle.test.mjs`（**26 断言**）；改前树（`lib/index.js.pre-codexlifecycle-2026-09-13` = `65DD012B…`）**21 条红**（并点名 5 条不算牙齿的 ✓）；回归 **ALL 69 TESTS PASSED**；`node --check` exit 0；三处 SHA 全等 `4EB51079…`。
+- **影响面（用户需知）**：从未使用且 `updatedAt` 超 30 天的条目**重启后不再被召回**（codex 语义）；若太严，**调大 `maxUnusedDays` 即可**，无需改码。**未 commit / 未 push / 未重启** ⇒ 真机生效需重启。
+
 ## 2026-09-12 · v0.1.10：每日预算「日界」由 UTC 日改为**本机时区**日（本地 00:00 换日）
 
 本次把阶段 A 的「每日模型尝试预算」**日界口径**从 **UTC 日**改为**本机（客户端）时区日**。基线：`759121d`（v0.1.9）。
@@ -12,7 +144,10 @@
   全仓复核：**再无以 UTC 日作日界的地方**（仅此一处，另有 2 个调用点 `drain` 前预算门 / 真模型尝试后计数，均只调 `dayKey()`，未改语义）。
 - **`runDay` 字段与 `modelAttemptsToday` 的重置时点随之改变**：以前在 **UTC 午夜**换日（东八区 = 北京时间 **08:00**），现在在**本地 00:00**换日。
 - **不新增任何持久字段**，`runDay` 仍是 `YYYY-MM-DD` 字符串（schema 未动）。
-- **（t132 补完）`nextDayBoundaryMs()` 唤醒点同步为本地午夜**：该函数原用 `d.setUTCHours(24, 0, 0, 0)`（**UTC 午夜**），被「预算耗尽 + 有到期作业 → 跨日唤醒」调用。日界本地化后二者口径不一致——新预算日从**本地 00:00** 起算，唤醒点却仍在 **UTC 午夜**（东八区＝本地 **08:00**），⇒ 新预算日开始后最多 **8 小时**（UTC−5 约 19h）没有跨日唤醒、作业干等。已改为 `d.setHours(24, 0, 0, 0)`（**本地下一午夜**，与 `dayKey()` 同一套语义），返回类型与语义均未变。
+- **（t144 修复 S0-1）「预算裁剪」与「消费提交」同口径，消除静默丢来源**：此前 `claimNextPhase2Job()` 把**全部**未消费 `stage1_outputs` 冻进批次 `input_ids`，而提示词只喂 `clampPromptInputs()` 的前 **`PROMPT_MAX_INPUTS`＝20** 条 ⇒ **第 21 条起从未进过模型，却被 `commitPhase2Batch()` 按整批 `input_ids` 标为已消费**（静默丢来源）。
+  改法选 **(a) 冻结点分批**：`claimNextPhase2Job()` 冻结时就按 `PROMPT_MAX_INPUTS` 切批（`unconsumed.length >= MAX_INPUTS_PER_BATCH` 即停），**多余的不入本批、保持未消费、由下一批领取**。这样「批次持有的 id」≡「模型实际看到的」≡「被提交消费的」成为**结构性事实**，且**不改** `commitPhase2Batch()` / 崩溃恢复路径的既有契约。
+  `memory_changes` **不参与**该预算裁剪（`buildConsolidationPrompt` 对 changes 全量渲染，L2462 `changes.forEach` 无上限），故其消费标记本就同口径，**无需一并切批**。
+  新增 `test/phase2-input-budget-consume.test.mjs`：造 21 条带唯一标记的输入，逐条断言「**被标已消费** ⇔ **标记确实出现在本轮提示词里**」，并点名第 21 条不得"未见即消费"；**修复前实跑 4 条断言失败**（第 21 条 `consumed=true / inPrompt=false`），修复后全绿。
 
 ### ⚠ 首日一次性额外重置（必须知晓）
 

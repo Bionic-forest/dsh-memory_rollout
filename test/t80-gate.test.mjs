@@ -102,10 +102,15 @@ try {
   const inputs25 = Array.from({ length: 25 }, (_, i) => ({ source_watermark: 'wm' + i, session_id: 's' + i, rollout_summary: 'X'.repeat(2000) }))
   const clad = clampPromptInputs(inputs25, REAL_SUMMARY, 'R'.repeat(20000), {})
   check(Array.from(REAL_SUMMARY).length > 120000, `大总纲字符数=${Array.from(REAL_SUMMARY).length} > 120k`)
-  check(Array.from(clad.currentSummary).length <= 12000 + MARK_LEN && clad.currentSummary.includes('（截断）'), `currentSummary 截到 ${Array.from(clad.currentSummary).length}`)
-  check(clad.currentRegistry.length <= 6000 + MARK_LEN, `currentRegistry 截到 ${clad.currentRegistry.length}`)
+  // S0-2（2026-09-13）：当前权威文件**整篇传入、不再截断**——旧断言「截到 12000 / 6000」已退役，
+  // 那正是「模型没看到 ⇒ 全文替换时静默丢结论」的根因。现在断言相反的不变量：整篇原样 + 截断状态可观测。
+  check(clad.currentSummary === REAL_SUMMARY, `currentSummary 整篇传入（${Array.from(clad.currentSummary).length} 字符，未截断）`)
+  check(clad.currentRegistry === 'R'.repeat(20000), `currentRegistry 整篇传入（${clad.currentRegistry.length} 字符，未截断）`)
+  check(clad.truncatedCurrent.summary === false && clad.truncatedCurrent.registry === false, 'truncatedCurrent 恒为 false（当前权威文件不截断）')
+  check(clad.currentChars.summary === Array.from(REAL_SUMMARY).length && clad.currentChars.registry === 20000, 'currentChars 如实反映整篇长度（可观测）')
   check(clad.inputs.length === 20 && clad.droppedInputs === 5, `inputs=${clad.inputs.length} dropped=${clad.droppedInputs}`)
   check(clad.inputs.every((x) => x.rollout_summary.length <= 600 + MARK_LEN), '每条 input ≤600+mark')
+  check(clad.clampedInputs === 20, `clampedInputs=${clad.clampedInputs}（增量输入被截断的条数，可观测）`)
 
   // ── ② L2 生成限长 ──
   console.log('[②] L2 生成限长')

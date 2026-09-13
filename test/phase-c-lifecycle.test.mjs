@@ -194,14 +194,15 @@ try {
     check(validateSourceRef({ path: rel, startLine: 1, endLine: 2 }, memoryRoot(), { content: 'quantum flute alchemy' }).ok === false, 'bad: unrelated content rejected')
   }
 
-  // ── [7] 生命周期谓词不影响既有召回排序（回归自检）────────────────────────
-  console.log('[7] recall still ranks stale below fresh (weight, not exclusion)')
+  // ── [7] t195 契约改向：30 天未用 ⇒ **失格**（不再是"只降权不淘汰"）────────────────
+  console.log('[7] t195: stale（>30 天未用）**失格**，不是降权（对齐 codex `max_unused_days`）')
   {
     seed('life-fresh', { content: 'the fresh lifecycle item is set', tags: ['lc'], updatedAt: stamp(1) })
     seed('life-stale', { content: 'the stale lifecycle item is set', tags: ['lc'], updatedAt: stamp(45) })
     const r = await tools.memory_recall.execute({ query: 'lifecycle', limit: 10 })
-    check(r.entries.length === 2, 'both active entries recalled (stale is NOT excluded, just de-weighted)')
-    check(r.entries[0].id === 'life-fresh', 'fresh ranks above stale (freshnessWeight down-weights stale)')
+    check(r.entries.length === 1, '只召回未过期的那条（旧断言「两条都召回、stale 只被降权」编码的是改前行为；t195 契约改向、**非放宽**）')
+    check(r.entries[0].id === 'life-fresh', '未过期条目被召回')
+    check(!r.entries.some((e) => e.id === 'life-stale'), 'stale（45 天未用）条目**不再被召回**（硬淘汰，照 codex 30 天窗口）')
   }
 } finally {
   try { fs.rmSync(tmp, { recursive: true, force: true }) } catch {}

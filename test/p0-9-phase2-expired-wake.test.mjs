@@ -179,8 +179,8 @@ try {
     check(fs.readFileSync(path.join(root(), 'memory_summary.md'), 'utf8') === 'v1\n## A3 ok', 'startup produced the consolidated memory_summary')
   }
 
-  // ── T4：安全校验持续失败 → 按 max_attempts 进终态；不泄露、不无限高频重试 ──
-  console.log('[T4] 安全校验持续失败 → max_attempts 终态，未泄露，不无限重试')
+  // ── T4：安全校验持续失败 → 按 max_attempts 进终态；不泄露；t170 起未消费输入**有界释放**（不再永久卡死）──
+  console.log('[T4] 安全校验持续失败 → max_attempts 终态，未泄露，未消费输入有界释放（t170 契约改向）')
   {
     const { ctx, domain, tools, root } = newCtx()
     await apply(ctx, {})
@@ -196,11 +196,16 @@ try {
     // 秘密校验失败关闭：不把未脱敏内容写进权威 summary（允许存在空/默认文件，但绝不含秘密）。
     const leakedSum = fs.existsSync(path.join(root(), 'memory_summary.md')) ? fs.readFileSync(path.join(root(), 'memory_summary.md'), 'utf8') : ''
     check(!leakedSum.includes('sk-abcDEF123456abcdef'), 'memory_summary NOT published with the secret (no leak)')
-    // 再调度一次 → 终态批不再被重领/重试（no-change、不调 LLM、不新建批、不忙循环）。
+    // t170 契约改向：终态批的**未消费**输入会被**释放**，所以下一轮**会**再跑一次（这是有界的：
+    // 每次释放 +1 计数，达 MAX_PHASE2_RELEASES 后显式 abandoned 并彻底停下）。
+    // 旧断言（no-change / 0 次 LLM）编码的是修复前的"永久保持绑定"行为——代价是来源**永久卡死且无人登记**。
     consolidationCalls = 0
     const r2 = await tools['memory__phase2_integrate'].execute({})
-    check(r2.ran === false && r2.reason === 'no-change', 'after terminal, next round no-change (no re-retry)')
-    check(consolidationCalls === 0, 'no further LLM call after terminal (no infinite high-frequency retry)')
+    check(r2.ran === true && r2.ok === false, 'after terminal, released input gets ONE bounded retry (not stuck forever)')
+    check(consolidationCalls === 1, `exactly one further LLM call for the released input (实测 ${consolidationCalls})，不是忙循环`)
+    const oA4 = domain.table('stage1_outputs').get('o-A4')
+    check(oA4 && oA4.phase2_release_count === 1, `释放计数 = ${oA4 && oA4.phase2_release_count}（有界：上界 3）`)
+    check(oA4 && oA4.phase2_abandoned !== true, '未达上界 ⇒ 仍可被正常处理（不静默丢）')
     check(j1 && j1.status === 'failed_terminal', 'batch stays failed_terminal (idempotent, no re-batch for same inputs)')
   }
 } finally {

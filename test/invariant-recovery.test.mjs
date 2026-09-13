@@ -65,15 +65,16 @@ try {
     check(!(j.status === 'succeeded_with_output' && !out), 'invariant repaired: no succeeded_with_output without output')
   }
 
-  // ── P0-4：真孤儿（批不存在）被解绑并重整；failed_terminal 批的 inputs 不被解绑（防无限重试）──
-  console.log('[P0-4] phase2 孤儿绑定：真孤儿(批不存在)解绑重整；failed_terminal 批 inputs 不自动解绑')
+  // ── P0-4：真孤儿（批不存在）被解绑并重整；failed_terminal 批的**未消费** inputs 被**有界释放**（t170）──
+  console.log('[P0-4] phase2 孤儿绑定：真孤儿(批不存在)解绑重整；failed_terminal 批的未消费 inputs 有界释放（t170 契约改向）')
   {
     // A：真孤儿——input 指向一个「不存在」的批 → 应被解绑并重新消费。
     await seedOutput(domain, 'j-orphan-a', {
       session_id: 's4a', source_watermark: 'wm4a', rollout_summary: 'ORPHAN_A', generated_at: '2026-01-01T00:00:00.000Z',
       phase2_batch_id: 'b-missing', selected_for_phase2: false,
     })
-    // B：failed_terminal 批是「真实存在」的终态批——其 inputs 应保留绑定（不退化为无限重试）。
+    // B：failed_terminal 批是「真实存在」的终态批——其**未消费**的 inputs 由 t170 起**有界释放**
+    //    （每次 +1 计数，达 MAX_PHASE2_RELEASES 后显式标 abandoned），使其可被重选，不再永久卡死。
     await seedOutput(domain, 'j-orphan-b', {
       session_id: 's4b', source_watermark: 'wm4b', rollout_summary: 'ORPHAN_B', generated_at: '2026-01-01T00:00:01.000Z',
       phase2_batch_id: 'b-failed', selected_for_phase2: false,
@@ -88,11 +89,13 @@ try {
     const oa = readOutputs(domain)['j-orphan-a']
     check(oa && oa.selected_for_phase2 === true, '真孤儿 A 已解绑并被重新消费')
     check(oa && oa.phase2_batch_id && oa.phase2_batch_id !== 'b-missing', '真孤儿 A 重新绑定到新批（不再是 b-missing）')
-    // B 保持绑定到 failed_terminal 批（不被解绑、不被重选）→ 不会退化成无限重试
+    // B：t170 契约改向 —— 不再"永久保持绑定"（那会让来源卡死且无人登记），而是**有界释放**后重入队。
     const ob = readOutputs(domain)['j-orphan-b']
-    check(ob && ob.phase2_batch_id === 'b-failed', 'failed_terminal 批的 input B 仍绑定 b-failed（不解绑）')
-    check(ob && ob.selected_for_phase2 !== true, 'B 未被消费（bound 到 failed_terminal，不自动重入队）')
-    check(consolidationCalls === 1, '只发起 A 一个真实整合（B 不产生额外批，无无限重试）')
+    check(ob && ob.phase2_batch_id !== 'b-failed', `failed_terminal 批的 input B 已解绑（现绑定 ${ob && ob.phase2_batch_id}）`)
+    check(ob && ob.phase2_release_count === 1, `B 的释放计数 +1 = ${ob && ob.phase2_release_count}（有界：上界 MAX_PHASE2_RELEASES=3）`)
+    check(ob && ob.selected_for_phase2 === true, 'B 被重新入队并消费（卡死解除）')
+    check(ob && ob.phase2_abandoned !== true, '未达上界 ⇒ 不标 abandoned（仍可被正常处理）')
+    check(consolidationCalls === 1, 'A 与 B 合并进同一批 ⇒ 仍只发起 1 次真实整合（没有因解绑而翻倍）')
     const live = Array.from(domain.table('phase2_jobs').entries()).find(([, j]) => j && j.status === 'committed' && Array.isArray(j.input_ids) && j.input_ids.includes('j-orphan-a'))
     check(!!live, '真孤儿 A 整入一个 committed 批（批存在）')
   }

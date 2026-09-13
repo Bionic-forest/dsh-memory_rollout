@@ -58,15 +58,19 @@ try {
   seed('shared-a', { content: 'shared fact A', tags: ['shared'], updatedAt: stamp(1) })
   seed('shared-b', { content: 'shared fact B', tags: ['shared'], updatedAt: stamp(1) })
 
-  // ── [1] M6: same relevance, different freshness → fresh before stale ──────────
-  console.log('[1] recall ranks fresh above a same-relevance stale entry')
+  // ── [1] t195 契约改向：同相关性下，>30 天未用的条目**失格**（不再是"排在后面"）──────
+  console.log('[1] t195: >30 天未用 ⇒ 失格（对齐 codex `max_unused_days`）；fresh 正常召回')
   {
     const writesBefore = table.putCount
     const r = await tools.memory_recall.execute({ query: 'protocol', limit: 10 })
-    check(r.entries.length === 2, 'two entries matched (protocol)')
-    check(r.entries[0].id === 'fresh-entry', 'fresh entry ranked first')
-    check(r.entries[1].id === 'stale-entry', 'stale entry ranked second')
-    check(table.putCount === writesBefore, 'recall is read-only (no storage put)')
+    check(r.entries.length === 1, '只召回未过期的那条（旧断言「两条都召回、stale 排第二」编码的是改前行为；t195 契约改向、**非放宽**）')
+    check(r.entries[0].id === 'fresh-entry', '未过期条目被召回')
+    check(!r.entries.some((e) => e.id === 'stale-entry'), 'stale（45 天未用）条目失格')
+    check(table.putCount === writesBefore, 'recall 的**调用本身**不写（使用计数是异步/去抖的 best-effort 写，见 t195 测试）')
+    // t195：使用计数是**异步**落盘的（读路径不等待）—— 等一拍再核。
+    await new Promise((res) => setTimeout(res, 150))
+    const fe = findEntry('fresh-entry')
+    check(!!fe && (fe.usage_count || 0) >= 1 && !!fe.last_usage, `异步使用计数已落到被召回的条目（usage_count=${fe && fe.usage_count}, last_usage=${fe && !!fe.last_usage}）`)
   }
 
   // ── [2] P1-4/§10.3: forget tombstones the entry (status=forgotten), never by tag ──

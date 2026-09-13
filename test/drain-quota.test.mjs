@@ -52,8 +52,11 @@ try {
   const jobs = readJobs(domain)
   check(res.processed === 1, 'only 1 job consumed because daily attempt cap = 1')
   check(extractionCalls === 1, 'only 1 extraction LLM attempt made (cap enforced)')
-  // H3: drain 产出后自动触发真 Phase 2 整合（一次额外 consolidation 调用）
-  check(consolidationCalls === 1, 'auto-triggered exactly 1 consolidation call after output')
+  // H3: drain 产出后自动触发真 Phase 2 整合（原本是一次额外 consolidation 调用）。
+  // t189 契约改向：本用例 `maxModelAttemptsPerDay: 1` 且已用 1 ⇒ **当日额度剩余 0% < 25% 阈值**
+  //   ⇒ 新的**额度门**拦住这次自动整合（抄 codex「额度不足不启动新整合」；只拦自动路径）。
+  //   旧断言「恒为 1 次」编码的是改前行为 —— 与 t170/t172 同类：契约改了，断言跟着改，**不是放水**。
+  check(consolidationCalls === 0, `额度耗尽 ⇒ 自动整合被额度门拦住（实测 ${consolidationCalls} 次；t189 契约改向）`)
   check(jobs['s1::w1'] && jobs['s1::w1'].status === 'succeeded_with_output', 's1 was distilled (consumed the single attempt)')
   check(jobs['s2::w2'] && jobs['s2::w2'].status === 'pending', 's2 stays pending — quota reached, not over-consumed')
 } finally {
