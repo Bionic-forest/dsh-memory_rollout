@@ -31,6 +31,17 @@ const check = (cond, msg) => {
   else { failed++; console.error('  ✗ ', msg) }
 }
 
+// t219（收口 t217 的 F1）：**缺导出包装** —— 让本文件在"改前树"上给**断言级红**（而不是 `TypeError`
+//   崩掉整份文件、0✓0✗、后面的断言全不跑）。参照 t189/t210 的做法：先无条件断言"本测试用到的导出都在"，
+//   A 段整体包 try/catch（缺导出/行为不同 ⇒ 记一条红并继续跑 B 段），保证最终 summary 与 exit code 仍由我们控制。
+const REQUIRED_EXPORTS = [
+  'apply', 'buildReferenceMap', 'referenceCatalogText', 'extractReferences', 'protectReferences',
+  'renderPhase2References', 'renderReferencePath', 'normalizeRefRelPath', 'verifyReferenceTarget', 'validatePhase2Output',
+]
+const missingExports = REQUIRED_EXPORTS.filter((n) => typeof M[n] !== 'function')
+check(missingExports.length === 0,
+  `本测试所需的导出齐全（缺失 ${missingExports.length} 个${missingExports.length ? '：' + missingExports.join(', ') : ''}）`)
+
 const root = () => path.join(HOME, 'memories')
 const draftsDir = () => path.join(root(), 'rollout_summaries')
 const SID = '9c0c360d-3aad-4886-a876-4597f688be81'   // 与真实数据同形（UUID）
@@ -45,8 +56,9 @@ writeDraft(SID, 3)
 writeDraft(FOREIGN, 1)
 
 // ─────────────────────────────────────────────────────────────────────────────
-// A. 纯函数层
+// A. 纯函数层（整段包 try/catch：改前树上缺导出时给断言级红，不崩）
 // ─────────────────────────────────────────────────────────────────────────────
+try {
 console.log('\n[A1] 映射只能由**插件既有记录**产生')
 {
   const inputs = [{ session_id: SID, source_watermark: 'wm-1', rollout_slug: 'alpha-slug', cwd: 'D:/x' }]
@@ -152,6 +164,10 @@ console.log('\n[A7] 结构判据：允许根 / 存在性 / 归属 / 行段')
   check(verifyReferenceTarget(e, { memoryRoot: root(), allowedSessions: ['someone-else'] }).ok === false, '不属于本批允许来源 ⇒ 不通过')
   const v = validatePhase2Output({ memory_summary: `v1\n- x → [[REF1:1-99]]`, registry: '# ok' }, { references: map })
   check(v.ok === false && v.errors.some((x) => x.includes('line range out of bounds')), '渲染后的结构字段按结构判据验证（行段越界 → 不发布）')
+}
+
+} catch (err) {
+  check(false, `[A 段] 在"改前树"上因缺导出/行为不同而中断（这是**预期的断言级红**，不是崩溃）：${err && err.message ? err.message : err}`)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

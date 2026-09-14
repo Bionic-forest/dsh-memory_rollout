@@ -41,6 +41,11 @@ const waitUntil = async (fn, ms) => {
   }
   return false
 }
+// t220（R2 §8-2）：执行者的可写根**不得**是记忆根，必须是记忆根内的**隔离候选工作区**。
+const isStrictSubdir = (parent, child) => {
+  const rel = path.relative(path.resolve(parent), path.resolve(child))
+  return !!rel && !rel.startsWith('..') && !path.isAbsolute(rel)
+}
 
 // ── 可暂停的 consolidation LLM mock（同 p0-9 款） ─────────────────────────────
 let consolidationCalls = 0
@@ -119,7 +124,12 @@ try {
   check(m.PHASE2_LEASE_MS === 3600000, `PHASE2_LEASE_MS = 3600000（实测 ${m.PHASE2_LEASE_MS}；改前 60000）`)
   check(m.HEARTBEAT_INTERVAL_MS === 20000, `HEARTBEAT_INTERVAL_MS = 20000（实测 ${m.HEARTBEAT_INTERVAL_MS}，心跳不变）`)
   const spec = typeof m.consolidationExecutorSpec === 'function' ? m.consolidationExecutorSpec(TARGET) : null
-  check(!!spec && spec.cwd === path.resolve(TARGET), `cwd = 记忆根绝对路径（实测 ${spec && spec.cwd}）`)
+  // t220 契约改向（R2 §8-2）：cwd **不再是记忆根**，而是记忆根内的隔离候选工作区（写边界隔离）。
+  check(!!spec && isStrictSubdir(TARGET, spec.cwd), `cwd = 记忆根内的隔离候选工作区（实测 ${spec && spec.cwd}）`)
+  check(!!spec && path.resolve(spec.cwd) !== path.resolve(TARGET), 'cwd ≠ 记忆根本身（执行者不拥有权威面的写权限）')
+  let specThrew = false
+  try { m.consolidationExecutorSpec(TARGET, { candidateDir: TARGET }) } catch { specThrew = true }
+  check(specThrew === true, 't220：把候选工作区设成记忆根本身 ⇒ 抛错（fail-closed，不给"写边界挪回根"的余地）')
   check(!!spec && spec.sandboxMode === 'workspace-write', `会话沙箱 = workspace-write（实测 ${spec && spec.sandboxMode}）`)
   check(!!spec && spec.approvalPolicy === 'never', `审批 = never（实测 ${spec && spec.approvalPolicy}）`)
   check(!!spec && spec.toolFilter.deny.includes('subagent'), `deny 含 subagent ⇒ 禁递归委派（实测 ${spec && JSON.stringify(spec.toolFilter.deny)}）`)
@@ -141,8 +151,8 @@ try {
     const ctx = { get: (k) => (k === 'agents' ? fa.svc : undefined) }
     const res = await startExec({ ctx, memoryRoot: TARGET, sessionId: 'p2-exec-t2' })
     check(res.ok === true, `建会话成功（ok=${res.ok}）`)
-    check(fa.calls.length === 1 && fa.calls[0].meta && fa.calls[0].meta.cwd === path.resolve(TARGET),
-      `agents.create 收到 meta.cwd = 记忆根（实测 ${fa.calls[0] && JSON.stringify(fa.calls[0].meta)}）`)
+    check(fa.calls.length === 1 && fa.calls[0].meta && isStrictSubdir(TARGET, fa.calls[0].meta.cwd),
+      `agents.create 收到 meta.cwd = 记忆根内的候选工作区（实测 ${fa.calls[0] && JSON.stringify(fa.calls[0].meta)}）`)
     check(typeof fa.calls[0].setup === 'function', 'create 带上 setup（创建窗口内做 restrict）')
     check(fa.restrictCalls.length === 1 && fa.restrictCalls[0].deny.includes('subagent') && fa.restrictCalls[0].allow.length > 0,
       `setup 里调用 tools.restrict 且 deny 含 subagent（实测 ${JSON.stringify(fa.restrictCalls[0])}）`)
@@ -173,7 +183,7 @@ try {
     const r3 = await startExec({ ctx: { get: () => undefined }, memoryRoot: TARGET, sessionId: 'x' })
     check(r3.ok === false && r3.reason === 'agents-service-unavailable',
       `降级原因明确（ok=${r3.ok} reason=${r3.reason}）`)
-    check(!!r3.spec && r3.spec.cwd === path.resolve(TARGET), '降级时仍返回 spec（便于日志/排查）')
+    check(!!r3.spec && isStrictSubdir(TARGET, r3.spec.cwd), '降级时仍返回 spec（便于日志/排查；cwd 仍是隔离候选工作区）')
   }
 
   // ── T4：真实整合批 —— 建了受限执行者 + 作业租约 ≈3600s（行为级，改前树必红） ─
@@ -194,8 +204,8 @@ try {
     const leaseMs = job && job.lease_expires_at ? new Date(job.lease_expires_at).getTime() - Date.now() : -1
     check(leaseMs > 3500000 && leaseMs <= 3601000,
       `作业租约 ≈ 3600s（实测 ${Math.round(leaseMs / 1000)}s；改前为 60s ⇒ 该断言在改前树上必红）`)
-    check(fa.calls.length === 1 && fa.calls[0].meta.cwd === path.resolve(root()),
-      `整合批在模型调用前建了受限执行者，且 cwd = 本会话记忆根（实测 ${fa.calls[0] && JSON.stringify(fa.calls[0].meta)}）`)
+    check(fa.calls.length === 1 && isStrictSubdir(root(), fa.calls[0].meta.cwd),
+      `整合批在模型调用前建了受限执行者，且 cwd = 本会话记忆根内的候选工作区（实测 ${fa.calls[0] && JSON.stringify(fa.calls[0].meta)}）`)
     check(fa.restrictCalls.length === 1, `该批 restrict 调用 1 次（实测 ${fa.restrictCalls.length}）`)
     pauseConsolidation = false
     releaseConsolidation()

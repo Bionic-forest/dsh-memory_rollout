@@ -2,6 +2,17 @@
 
 遵循《向 Codex 原版系统看齐》工程总纲 §19 工作纪律：每次变更记录对应需求、行为变化、测试与成熟度等级变化。成熟度等级（L0–L4）见总纲 §3。
 
+## 2026-09-14 · v0.1.14（t219 + t220）：联合数据契约纠正 + 受限执行者三条边界收口
+
+**本版内容（两批；各自的完整细节见下方 v0.1.13 节内的两个「追加」小节）**
+- **t219 · 联合数据契约纠正**（R2 §3 四处语义 + §4/§7 标注纠正 + t217 三条收口）：三层分离契约块进代码（作业队列层 ≠ 当前记忆选择集合层 ≠ 查询结果层；作废 R1 §5.4 把 `available_at`/`attempt_count`/未消费优先取 20/未绑定 batch 误称「固定基准」）；新增纯数据常量 `QUOTA_SEMANTICS`（四类额度口径分开标注）；manifest 增 `selection_scope:'batch-inputs'`（如实标明"只登记本批输入"，**不是**完整当前选择集合）；30 天机制正名为「entries 层检索资格策略」并写明分层范围差异；更正与实际 comparator 不符的注释（`usage_count` 是首键、先于相关性）；`phase2_abandoned` 正名为可审计隔离（**停止重试 ≠ 恢复成功**）。**行为零更改**（注释 / 一个纯数据常量 / 一个 manifest 声明字段）。
+- **t220 · 受限执行者三条边界收口**（R2 §8）：① 限制未建立（`restricted!==true` 或沙箱/审批未落成）⇒ **不派发**受限轮次（`ok:false` + 明确原因 + **停掉刚建的会话**），不再"只记字段继续"；② 执行者 **cwd = 记忆根内的隔离候选工作区**（`<根>/.consolidation-out/executor-workspace/attempt-<n>-<nonce>`），把 cwd 设成记忆根本身/根外 ⇒ **抛错**；另加**权威面快照比对**兜底（`MEMORY.md`/`memory_summary.md`/`current.json`/`versions/` 被动过 ⇒ **该轮产物拒收** + `executor_boundary_violation` 落记录，权威发布仍由外层独占）；③ 超时/派发抛错 ⇒ **`cancel()`+`dispose()`** 停掉执行者（有界 5s），**每次尝试独立产物路径** + 回读**新鲜度闸门**（早于派发时刻 ⇒ `executor-stale-output` 拒收）。提示词里"只写输出文件"**只是提示、不是访问边界**（明写在代码注释与报告）。
+
+**bump 理由（必写）**：`0.1.13` **已于 `72869eb` 公开推送**。同一版本号再推一份内容不同的产物，会造成「**公开产物同名不同内容**」——对 `package.json` / npm 语义与任何按版本号引用的读取方都是错误信号。故本批 **bump 到 `0.1.14`**。（对照：v0.1.13 那一批当时**尚未推送**，"并入同版、零额外成本"的理由成立；本轮前提已变，故必须 bump。）
+
+**回归**：`ALL 76 TESTS PASSED`（v0.1.13 基线 74 → +t219 契约测试 +t220 边界测试）；`node --check lib/index.js` exit 0。
+**生效状态**：本版已 commit + push（见《第四次推送》报告），但**运行实例未重启** ⇒ 代码在磁盘/远端，进程里仍是旧构建；**真机端到端验收与执行者三边界真机复核（R2 §9-C）留待重启窗口**。
+
 ## 2026-09-13 · v0.1.13（t206 · S1）：`last_used_at` 进 `recordSchema` —— 让 t198 的 F1 在生产路径真正生效
 
 **认账（本批的第一件事）**：v0.1.12 里那条 F1「读路径兼容旧字段 `last_used_at`」**在生产路径是空转**。`recordSchema` 未声明该字段，而宿主存储域载入记录时走 `valueSchema.parse(raw)`（zod 对象默认 **strip 未声明键**）⇒ 该字段在到达插件**之前**就被剥掉，`lastUsageOf` 永远收不到它。t198 的测试测不出，是因为它把带旧字段的记录**直接 put 进假域**（假域不跑 schema），只证明了「读函数认这个字段」。
@@ -82,6 +93,40 @@
 - **回归**：`ALL 74 TESTS PASSED`（基线 73 + 本批 1）；`node --check lib/index.js` exit 0。三处 `lib/index.js` SHA 全等 = **`F5D7F50A92848EB3746AAF77AE10582FD0A5A2C18672BDC4E5C7151A9ECC7B9A`**。本批一并改了 3 个既有测试的**引用形态**（`citation-format` 读侧引用加 `memories/` 前缀；`phase2-input-budget-consume` 与 `t80-gate` 的指针改代号 + 为被引用会话补真实草稿），并给 `t80-gate` **新增 3 条**断言（逃生口已移除 / 已改为用代号 / 用户消息含引用目录）—— 断言强度只增不减。
 - **版本口径（R2 §9-C）**：**不 bump，仍 `0.1.13`**（该版本尚未 commit / 未 push ⇒ 并入零额外发布成本）。**点名 SHA**：`F5D7F50A…` 这个构建 = **t206 + t208 + t210 + t213 + t216(D1)**。**不得**把它当成"已经整体验收的同一构建"：各批只在**各自的交付 SHA** 上被独立验证过（t206/t208 @ `B8ED3588…`、t210 @ `90BF6B1C…`、t213 @ `EB0AD23D…`），本 SHA 的整体端到端验收**留给下一次重启后的真机整合**。
 - **codex 口径纠正**：本批依据固定基准 **v1**（`_ref-codex\codex-rs\memories\write\templates\memories\consolidation.md`）—— 该模板要求 `### rollout_summary_files` 行给出**精确文件名 + 独立元数据字段**（cwd/updated_at/thread_id），并明令「missing ⇒ treat as missing evidence、do not invent」（**L832-833 / L863**），与本地修法同向。**不采用** `consolidation_v2.md` 的格式与 10,000 字节要求（v2 只作旁证）。另：**未取得 codex 秘密规则实现**（镜像缺 `codex-rs/secrets/**`）⇒ **不能断言原生"绝不存在任何同类冲突"**。
+
+### 追加（同日 · t219 · B）：**联合数据契约纠正**（R2 §3 四处语义 + §4/§7 标注纠正 + t217 三条收口）
+
+- **依据**：GPT R2 §9-B ——「只修 §3 的四处关键语义……**不要再复制更多名为「照 Codex」的函数**」；本批**文档/标注为主**，只做**可验证的最小代码改动**。
+- **三层分离（明文进代码，不再靠口头）**：`lib/index.js` 模块头新增契约块 —— **作业队列层**（重试/租约/批次/消费进度）≠ **当前记忆选择集合层**（稳定来源身份 / 源版本 / 使用记录 / 时间窗 / 数量限制）≠ **查询结果层**（相关性/作用域/资格/证据）；明写「**把同一算法放错层，比缺一个参数更严重**」与「**不再新增"名为照 Codex、实则搬错层"的函数**」；并点名**作废**修订稿 R1 §5.4 把 `available_at` / `attempt_count` / 未消费优先取 20 / 未绑定 batch 误称「固定基准」的说法 —— **那组字段属作业调度层**。
+- **`QUOTA_SEMANTICS`（新导出，纯数据）**：四类额度口径**分开标注** —— 每日 Stage1 尝试上限（本地发明、只有提炼记账）/ 每趟处理上限（`perPassSourceBudget`）/ Phase 2 调用预算（**无独立预算：Phase 2 的调用不进本地计数**）/ 真实 provider 限额（**未实现**）；`sharedAccounting:false` ⇒ **不得**把这项本地门表述成服务商额度门（要共享就必须两阶段 + 回落都记账）。
+- **manifest 增 `selection_scope`**：如实标 **`'batch-inputs'`**（只登记本批消费的输入，**不是**"完整当前选择集合"）+ `selection_scope_note`。R2 §3.2：「把批次 input_ids 抄进 manifest 仍然没有当前集合」⇒ 完整选择集合属**未启用的目标能力**。
+- **`phase2_abandoned` 语义正名**：**可审计的隔离 / 人工待处理状态**，**不是**记忆语义上的淘汰；**停止重试 ≠ 恢复成功**；被放弃的 `memory_changes` 同样需要恢复语义（用户明确要记住/更正/忘记的不得因执行失败被默默撤销）；**有界、去重、可追溯的恢复入口**属未启用的后续小批（本批不改行为）。
+- **30 天机制正名**：改称「**entries 层检索资格策略**」，并在三处注释里写明**分层范围差异** —— `entryEligible()` 只过滤 `entries`；`searchMemoryFiles()`（权威文件 + 草稿）与总纲注入**不走**这条链 ⇒ **一条 entries 失格不保证**同一事实从文件搜索/注入消失。
+- **更正与实际 comparator 不符的注释**：`usage_count` 实为**首键**、**先于查询相关性**（旧注释「仅在相关性打平时影响排序」已作废）⇒ 这是 **DSH 的曝光代理/热门优先**排序，不是 codex 在 Phase 2 **来源选择**位置的原样移植（层不同：codex 排来源集合，本地排查询结果）。
+- **「文件层退出」= 未启用的目标能力**：明文写进模块头契约块与 entries 资格块，本批**不实现**；**不得**把"只做 entries 层的版本"宣称为原生全生命周期完成。
+- **t217 三条收口（交付 0）**：① **F1** `test/t216-d1-reference-map.test.mjs` 加**缺导出包装** ⇒ 改前树上给**断言级红**（实测改前树 `5EC1DA86…` / 341,704 B：**6 ✓ / 8 ✗ / exit 1**，无 `TypeError`；本批树 52 ✓ / 0 ✗）；② **F2** `verifyReferenceTarget` 的 `allowedSessions` 分支**补注释**（归属由映射构造保证；保留分支供单测负例与将来复用路径收紧，**不假装**生产路径在查它）；③ **F3** 更正 t216 报告 §7.2 牙齿口径（探针树已回收、不作可复跑背书；改以该树的可复跑断言级红为替代）。④ 回收同类冗余还原口 `test/t178-write-lock-conflict.test.mjs.pre-assertanchor-2026-09-13`（走回收站）。
+- **测试**：新增 `test/t219-contract-semantics.test.mjs`（25 处 `check(` → 实跑 **24 条断言**，全绿）。**牙齿**：还原口树（`lib/index.js.pre-contract-2026-09-14` = `F5D7F50A…` / 386,322 B）实测 **9 ✓ / 12 ✗ / exit 1**；新树 **24 ✓ / 0 ✗**。还原口树上那 9 条 ✓ 全部是**假阳性**（两棵树都成立：entries 层资格 3 / comparator 2 / 发布 1 / 放弃隔离 3 ⇒ 本批只改注释与口径，行为未变），**不计入**牙齿；真牙齿 12 条 = 缺 `QUOTA_SEMANTICS` 1 + C1 中断 1 + 契约文本源码锚点 7 + `selection_scope` 2 + 缺失常量 1。
+- **不越权（明文）**：**不实现文件层退出**；不新建知识图数据库；**不动 D1 已修好的引用映射链**；不改已独立验证过的 ①②④ 既有行为（本批只加注释 / 常量 / 一个 manifest 声明字段）。
+- 回归：`ALL 75 TESTS PASSED`（基线 74 + 本批 1）；`node --check lib/index.js` exit 0；三处 `lib/index.js` SHA 全等（新 SHA 见 t219 报告）。**不 bump，仍 0.1.13**（尚未 push 的批次内并入）。
+
+### 追加（同日 · t220）：受限执行者**三条边界收口**（R2 §8 · C 前置）
+
+- **依据**：GPT R2 §9-C「**受限执行者先闭合 §8 的边界**；……在允许的重启窗口验证一次真正有来源的端到端整合」。
+- **边界 1（§8-1）限制建立失败 ⇒ 不再走受限路径**：原先 `startConsolidationExecutor()` 建完会话**一律 `ok=true`**（即使 `restricted=false`、策略未落成），派发侧只看 `executor.ok` ⇒ **限制没建立照样派发**。现在：`restricted !== true` **或** 沙箱/审批未按预期落成 ⇒ 返回 `ok:false` + 原因 `executor-restrictions-not-established: …`，**并停掉刚建的会话**；派发侧因 `executor.ok===false` 直接走显式回落，原因落批记录（**不是"只记字段继续"**）。
+- **边界 2（§8-2）执行者写范围隔离**：原先 `meta.cwd` = **整个记忆根** ⇒ 执行者（有 `read/write/edit`）理论上能在校验前写 `MEMORY.md` / `current.json` / 现有版本目录。现在：
+  - `consolidationExecutorSpec(root, { candidateDir })` 的 cwd **永远**是记忆根内的**隔离候选工作区**（缺省 `<根>/.consolidation-out/executor-workspace`，每次尝试再套一层 `attempt-<n>-<nonce>`）；把候选工作区设成记忆根本身/根外 ⇒ **抛错**（fail-closed，不给"写边界挪回根"的余地）。
+  - **兜底检查**：本轮派发前记下**权威面快照**（`MEMORY.md` / `memory_summary.md` / `current.json` / `versions/` 清单），读完**先比对再采纳**；发现被动过 ⇒ `boundaryViolation` ⇒ **该轮产物一律拒收**、显式回落，并把 `executor_boundary_violation` 落批记录 + `console.warn`。**权威发布仍由外层独占。**
+  - **明写**：提示词里"只许写 `result.json`"**只是提示、不是访问边界**；真正的边界是 cwd 隔离（宿主沙箱）+ 上述快照比对。
+- **边界 3（§8-3）超时与重试不竞争、不复用旧结果**：
+  - 超时/派发抛错 ⇒ 调 `stopConsolidationExecutor()`（`agent.cancel()` + `handle.dispose()`，有界 5s）并把执行者标记 `stopped` ⇒ **原执行者停止**，迟到写回不会与回落发布竞争。
+  - 每次尝试用**独立产物路径**（`attempt-<n>-<nonce>/result.json`）⇒ 重试**不共用**输出路径；
+  - 回读加**新鲜度闸门**（`EXECUTOR_OUTPUT_FRESHNESS_GRACE_MS=2000`）：产物早于本轮派发时刻 ⇒ 判 `executor-stale-output` 并拒收（**不复用上一次尝试的旧结果**）。
+  - 顺手：尝试目录读完即清，候选工作区/`.consolidation-out` 空了就删（R2 §8 明确**不**为此另开任务，故并入本批）。
+- **可观测**：`phase2JobSchema` 增 `executor_cwd`（候选工作区）与 `executor_boundary_violation`（越界证据）。
+- **测试**：新增 `test/t220-executor-boundary.test.mjs`（28 条断言，全绿）覆盖 R2 的最小验证集 ①②③；`test/t187-restricted-executor.test.mjs` 的 4 条 cwd 断言随契约改向（cwd 由"记忆根"改为"记忆根内的隔离候选工作区"）+ 新增 2 条（cwd ≠ 根、把候选工作区设成根 ⇒ 抛错）。**牙齿**：还原口树（`lib/index.js.pre-execboundary-2026-09-14` = `E63471D7…` / 396,066 B）实测 **7 ✓ / 21 ✗ / exit 1**；新树 **28 ✓ / 0 ✗**。还原口树那 7 条 ✓ 全部是**假阳性**（两棵树都成立：旧树该场景本也回落/也会跑受限会话/也超时失败等），**不计入**牙齿。
+- **不回归**：未动 D1 引用映射链（`buildReferenceMap` / `renderReferencePath` / `protectReferences` / `redactSecrets`）、② 门逻辑、④ 判据、工具 schema、`withWrite`、发布路径既有语义。
+- **真机项（如实标注）**：R2 §8 的第 ④ 项「一次真实受限轮次」**本批无法验证**（需重启后的真机窗口）；另外"执行者 cwd 改为候选工作区后，**读取**记忆根是否仍被宿主放行"也需真机实测（读受限不影响整合提示词完整性，但会影响按引用代号访问细节文件）。
+- 回归：`ALL 76 TESTS PASSED`（基线 75 + 本批 1）；`node --check lib/index.js` exit 0；三处 `lib/index.js` SHA 全等（新 SHA 见 t220 报告）。
 
 ### 成熟度
 S1 收口（与 D1 **无关、并行**）。宿主侧证据：实际加载的存储域副本 = `@deepseek-ai+dsh-storage-do_95fd490…`（`dsh-web-app@0.1.5-rc.1` 家族解析到的 junction；`0.1.5-alpha.1` 副本内容逐字节相同）其 `lib/index.js` = `E536BA09B7CCC0F10BB54818DFE44454374E5CBF7AEBA140B216BA1CA2E87517`（17,327 B），载入循环 `L368-378` 调 `parseRecord(... => tableSpec.valueSchema.parse(raw))`（**L371**），schema 不符则抛 `invalid-record`（L420-431）。**未 commit / 未 push / 未重启**；第三次推送与 D1 修复合并为一次（本节目前含 t206 / t208 / t210 / t213 四批，届时一并成为 `v0.1.13`）。
