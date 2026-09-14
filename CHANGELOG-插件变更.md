@@ -2,6 +2,29 @@
 
 遵循《向 Codex 原版系统看齐》工程总纲 §19 工作纪律：每次变更记录对应需求、行为变化、测试与成熟度等级变化。成熟度等级（L0–L4）见总纲 §3。
 
+## 2026-09-14 · v0.1.15（t224）：会话 id 与尝试解耦 + F2/F3/F4 收口（真机验收四发现）
+
+**来源**：t223 真机端到端验收（**结果层 D1 真机通过；边界层未取得**）报出的四条发现。
+
+**F1【高 · 必修】会话 id 与尝试解耦**：真机 `executor_path="in-process-fallback"`、`executor_cwd=""`、`executor_reason` 逐字 = `executor-start-failed: session "p2-exec-p2-mu03jj81-ylo26w" already exists`。根因不是新 cwd 被宿主拒，而是**会话 id 撞名**：候选目录带 nonce 而 sessionId 只有 `batch.id` ⇒ 同一批**第 2 次及以后尝试必然永久回落** ⇒ 受限路径在真机上**不可用于任何重试**。
+- **修法**：`sessionId = p2-exec-<batchId>-<executorAttemptTag>`（与候选目录**同一个** tag）⇒ 一次尝试 = 一个会话 + 一个产物路径（自洽）。
+- **旁带（F4 的一半）**：cwd 改为**候选工作区根**、本次产物落其下 `attempt-<tag>/`（**只一层**）—— t220 曾写成一 层套一层。
+- 测试：`test/t224-attempt-isolation.test.mjs` 用"重名即抛"的假 agents 服务复现主机行为 ⇒ 同一批两次尝试：`created=2`、两个 sessionId 不同且各带 attempt 标记、第 2 次**不再** `already exists`、且**真的走了受限路径**（`executor_path='restricted-session'`）。**改动前树上该测试逐字复现真机错误串**（17 ✗）。
+
+**F2【低】成功提交后清批级 `last_error`**：原先 `commitPhase2Batch` 只清 meta 的 `phase2_last_error`，批记录里的旧错串（如昨天的 `unredacted secret …`）会一直被误读成"本轮仍失败"。
+- **修法**：提交时 `last_error` 清空，并把被清的值**转存 `last_error_history`**（选"清空 + 转存"而不是只标注：既不误导当期、又不丢历史；与 meta 层"成功即清"同口径）。
+
+**F3【中】注册表里的 3 个 slug 短名在**重整合时被纠正为真实路径**（不再以 `unverified_references` 收尾）**：真机发布后 `MEMORY.md` 仍带 `（未验证引用：dsh-backup-cleanup-agents-refresh.md）` 等 3 行。**根因**（本地复现定位）：`buildReferenceMap` 里 slug 别名只被塞进一个**去重 Set**，当"该会话已经因**本批输入**而有了条目"时，`addEntry` 走提前返回分支只写了 Set、**没写 `byAlias`** ⇒ 基线里的旧 slug 永远解析不到 ⇒ 只能落 `unverified`。**修法**：用一个 `aliasIndex: Map<alias, publicPath>` 记录别名（含去重分支），构造完条目后把别名接回 `byPublic` 里的条目。**信任面不变**（别名仍只来自插件记录 `stage1_outputs.rollout_slug`，且要求 session 唯一）。测试覆盖单元级（`byAlias.get('legacy-slug')` 存在 + 渲染为真实路径 + `unverified=0`）与端到端（发布的 `MEMORY.md`/`memory_summary.md` 里旧 slug 已变成 `memories/rollout_summaries/<真实会话>.md`、无 `未验证引用` 残留）。
+
+**F4【低】失败尝试的空 `attempt-*` 目录**：原先 `cleanup()` 只挂在"执行者真跑起来"的路径 ⇒ 会话创建失败/限制未建立时目录无人清。
+- **修法（选"清理"而非"登记为常驻产物"）**：候选目录只是中间态，留着既会被误当产物又会逐次堆积；批处理收尾处对**本次尝试目录**做**幂等**清理 + 删空的工作区与 `.consolidation-out`。测试：会话创建抛错 ⇒ 批记录原因明确 **且**无任何候选目录残留。
+
+**不回归**：未动 D1 引用映射链的信任逻辑（`extractReferences` / `protectReferences` / `redactSecrets` / `renderPhase2References` 的判定未改，只在 `buildReferenceMap` 里补别名索引）、② 门逻辑、④ 判据、`memory__*` 工具声明 schema、`withWrite`、发布路径既有语义。
+
+**回归**：`ALL 77 TESTS PASSED`（v0.1.14 基线 76 → +t224）；`node --check lib/index.js` exit 0。
+
+**生效与验收（必读）**：本版**需重启**才生效；**重启后必须重跑真机验收**，才能宣布「受限轮次真发生过」（t223 只取得结果层证据，边界层因 F1 未取得）。D1 结果层真机结论（滞留批被消化、指针渲染为真实路径等）**已取得、不受本批影响**。
+
 ## 2026-09-14 · v0.1.14（t219 + t220）：联合数据契约纠正 + 受限执行者三条边界收口
 
 **本版内容（两批；各自的完整细节见下方 v0.1.13 节内的两个「追加」小节）**

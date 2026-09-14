@@ -134,11 +134,16 @@ try {
       `会话活动证据：turns=${fake.state.turns}（>0 = 轮次真跑了；t211 实测改前是 turns:0）`)
     check(inProcessConsolidationCalls === 0,
       `**进程内 LLM 零调用**（实测 ${inProcessConsolidationCalls} 次；改前树 1 次 ⇒ 必红）`)
-    const batchId = String((followups[0] && followups[0].sessionId) || '').replace(/^p2-exec-/, '')
-    const rec = jobsOf().find((j) => j.id === batchId)
+    // t224（F1）：会话 id 现在是 `p2-exec-<batchId>-<attemptTag>`（会话与尝试解耦）⇒ 取批记录改为
+    //   按"走过受限路径"找，并**另行断言**会话 id 以 `p2-exec-<batchId>` 开头（新契约）。
+    const rec = jobsOf().find((j) => String(j.executor_path) === 'restricted-session')
+    const batchId = String((rec && rec.id) || '')
+    const sid0 = String((followups[0] && followups[0].sessionId) || '')
+    check(!!rec && batchId !== '' && sid0.startsWith(`p2-exec-${batchId}`),
+      `会话 id 带批次前缀且与尝试解耦（sessionId="${sid0}" / batchId=${batchId}）`)
     check(!!rec && rec.executor_path === 'restricted-session',
       `批记录带**不依赖控制台**的观测：executor_path=${rec && rec.executor_path}（改前树无该字段 ⇒ 必红）`)
-    check(!!rec && rec.executor_session_id === `p2-exec-${batchId}` && rec.executor_restricted === true && rec.executor_reason === '',
+    check(!!rec && String(rec.executor_session_id).startsWith(`p2-exec-${batchId}`) && rec.executor_restricted === true && rec.executor_reason === '',
       `会话 id / restricted / 空原因三项齐（实测 ${rec && rec.executor_session_id} / ${rec && rec.executor_restricted} / "${rec && rec.executor_reason}"）`)
     check(!!rec && /turns=|events=/.test(String(rec.executor_activity || '')),
       `会话活动证据落记录：executor_activity="${rec && rec.executor_activity}"`)
