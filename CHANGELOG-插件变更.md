@@ -2,6 +2,90 @@
 
 遵循《向 Codex 原版系统看齐》工程总纲 §19 工作纪律：每次变更记录对应需求、行为变化、测试与成熟度等级变化。成熟度等级（L0–L4）见总纲 §3。
 
+## 2026-09-13 · v0.1.13（t206 · S1）：`last_used_at` 进 `recordSchema` —— 让 t198 的 F1 在生产路径真正生效
+
+**认账（本批的第一件事）**：v0.1.12 里那条 F1「读路径兼容旧字段 `last_used_at`」**在生产路径是空转**。`recordSchema` 未声明该字段，而宿主存储域载入记录时走 `valueSchema.parse(raw)`（zod 对象默认 **strip 未声明键**）⇒ 该字段在到达插件**之前**就被剥掉，`lastUsageOf` 永远收不到它。t198 的测试测不出，是因为它把带旧字段的记录**直接 put 进假域**（假域不跑 schema），只证明了「读函数认这个字段」。
+
+### 变更（`lib/index.js`）
+- `recordSchema` 新增 **`last_used_at`**（并写清成因注释），使该字段在宿主 parse 之后仍在。**声明形态经 t208 修订为 `zod.string().optional()`**（t206 当时为 `.default('')`，见下方「追加（同日 · t208）」）。
+- **写入面（明确约定）**：**读兼容旧字段；写入仍只写 `last_usage`**。唯一会被写回的场合是 `scheduleUsageBump` 的 `{ ...cur }` 展开——它把**已存在**的旧值原样带回（不新写、不更新）。**「会落空串」的代价已在同批内消除（t208）**：改用 `.optional()` 后，原始记录**没有**该键时**写回序列化不会新增 `"last_used_at": ""`** ⇒ 磁盘上「从未有该字段」与「有字段但空」的区别被保住；同时真实旧值仍读得回、投影 `String(x || '')` 仍得空串。
+- 与本批无关的**不动项**：① 受限执行者接口层、② 两道启动门槛、④ 生命周期判据、`memory__*` 工具声明 schema、`withWrite`、发布路径、`redactSecrets` 闸门与提示词引用格式（D1 正等外部评审）。以还原口为基准 diff：**t206 当时 = 1 个文件 / 7 行插入 / 0 删除**（唯一一处）；**t208 修订 = 1 个文件 / 8 行插入 / 6 删除**（仅注释改写 + 1 行声明形态）。
+
+### 测试
+- 新增 `test/t206-schema-last-used-at.test.mjs`（**13 断言**）。**与旧 F1 测试的关键差别**：它先用 `storageDomain.open` 捕获插件交给宿主的**域规格**，拿到**宿主真正会 parse 的那份 `valueSchema`**，再拿它 parse 原始记录 ⇒ 「parse 之后字段是否还在」才成为可断言的事（随后还走读函数、写入面与行为级召回）。
+- **牙齿**（同一份测试文件，只换 `lib`）：还原口树 **6 ✓ / 7 ✗ / exit 1**——核心三条是「parse 后字段丢失 → 读函数得 `null` → 行为级：`updatedAt` 过期但旧字段新鲜的条目**不再被召回**」；工作区树 **13 ✓ / 0 ✗**。文件内 6 条「两树都过」的断言已就地标注**假阳性**、不计入牙齿；另 1 条（缺字段 ⇒ 空串）标注为**契约型牙齿**（抓本批新声明的缺省契约，而非缺陷本体），如实自报，不混算。
+- **漏洞自证**：在**同一棵还原口树**上跑旧的 `t198-legacy-usage-field.test.mjs` ⇒ **25 ✓ / 0 ✗ / exit 0（全绿）** ⇒ 直接证明旧测试在该缺陷上失明（它绕过 parse）。
+- 回归：`pwsh -NoProfile -File test/run-tests.ps1` → **71/71 全绿**（= 基线 70 + 本批 1）；`node --check lib/index.js` 通过。
+
+### 追加（同日 · t208）：同批内修订 —— `.default('')` → `.optional()`，「写回新增空键」的代价消除
+
+- **来源**：t207 独立验证（通过 10/10）报出的**低·建议（不阻断）**，且由验证方**实测过**可行。
+- **问题**：`.default('')` 会让**原始记录里没有该字段**的情况在**写回序列化**时多出 `"last_used_at": ""` ⇒ 磁盘形态被改，此后**不能再区分「从未有该字段」与「有字段但空」**（一次不可逆的形态改动）。
+- **修法**：声明改为 **`zod.string().optional()`**（+ 注释口径更新）。读路径行为**不变**（投影仍 `String(x || '')` ⇒ 从未使用仍得空串；`lastUsageOf` 仍判 `null`）；真实旧值仍读得回；缺键的记录写回**不再新增该键**。
+- **牙齿**：扩展 `test/t206-schema-last-used-at.test.mjs`（**13 → 17 断言**）：T4 改为「缺键 ⇒ parse **不新增该键**」（原「得空串」的口径随契约更新）；新增 **T8**「原始记录没有该字段时，写回序列化结果不含该键」——**单元级**（逐字模拟 `{ ...cur, usage_count, last_usage }`）+ **行为级**（经真实 `scheduleUsageBump` 回写后再读同一条记录）。**改前树（= 还原口 `140A8BDF…`，即 `.default('')`）实测 14 ✓ / 3 ✗ / exit 1**（红：T4 键被补齐、T8 单元级写回含空键、T8 行为级磁盘记录含该键）；**新树 17 ✓ / 0 ✗**。原有「parse 后字段仍在」（T2）与「真实旧值被保留」（T6）两条断言**未改动**。
+- **不 bump 的理由**：`v0.1.13` **尚未 commit / 未 push**（远端仍是 `v0.1.12` 的 `2b7f666`）⇒ 同批内修订**零额外发布成本**，且避免把一次未发布的形态改动留在版本号之外；`CHANGELOG` 在**同一节内**就地补充（本节即 v0.1.13）。
+- 回归：`ALL 71 TESTS PASSED`（测试文件数不变，扩展的是既有文件）；`node --check lib/index.js` 通过。三处 `lib/index.js` SHA 全等 = **`B8ED3588920665B58AA738448487DACF22666C294EC425CEAD949D8E9A5350F6`**（342,703 B）。
+
+### 追加（同日 · t210）：修「提炼吃光全天额度 ⇒ 整合被门二饿死」（对齐 codex per-pass 上限 + 为整合保底额度）
+
+- **来源**：2026-09-14 01:37 **真机事实**（本地日界翻转后）——`runDay=2026-09-14`、`modelAttemptsToday` 已 **24/24**；提炼真跑了（`stage1_jobs.pending` 39→8、`succeeded_with_output` 29→53、未消费产物 16→40），而整合**没跑**（`lastPhase2At` 仍 `09-13T03:51:30Z`、`publish_versions` 仍 114、`current.json` 未变、总纲 mtime 仍 **09-13 11:51:48**）。⇒ 提炼的一趟（**日界唤醒趟**）吞掉当天全部模型额度，此后 `门二`（剩余 <25%）**永远**拦住整合，总纲自 11:51 起再不更新。**这是继 D1 之后「记忆停止更新」的第二个机制性原因。**
+- **codex 复核**（镜像 `_ref-codex\`，commit `a592c38c`）：`config/src/types.rs` **L317** 文档原文 = "Maximum number of rollout candidates processed **per pass**"（字段名虽叫 `max_rollouts_per_startup`）；唯一使用点 `memories/write/src/phase1.rs` **L140** 把它作为**本次 claim 的上限**（`max_claimed`）。⇒ codex 语义是 **per pass（每一趟）**；本地此前**只把上限绑启动趟**，唤醒/日界/事件趟不设限 —— 该偏差正是本缺陷的一半成因。另一半是**本地发明**：codex 用 provider 的 rate-limit 窗口，**没有**「每日模型尝试次数」这一机制；而本地该额度是**单一池**、**只有提炼自增**、整合只读它做门 ⇒ 提炼可以把整池吃光。
+- **修法（两处）**：
+  1. **`stage1QuotaPlan`（新纯函数）= 为整合保底额度**：存在「未整合产物/变更」时，提炼只在「这一发用掉后剩余仍 ≥ 门二所需的最小整数剩余」时才开工。`reserve = min(ceil(cap × 阈值% / 100), cap − 1)` —— **与门二同阈值推导** ⇒ 「提炼因护栏停下」时门二**必然放行**；上限 `cap−1` 保证至少给提炼留 1 发（`cap=1` 时不至于把提炼全关，维持既有 drain-quota 契约）。**无未整合产物时不保留**（不损失提炼吞吐）。**可调**：调大 `minRemainingQuotaPercent` ⇒ 多留给整合；置 0 ⇒ 等效关闭本护栏。默认（cap 24 / 阈值 25）⇒ `reserve = 6`。
+  2. **per-pass 上限对齐 codex**：新增 `perPassSourceBudget()`，**启动趟 / 唤醒趟（含日界）/ 事件趟**都带 `maxSourcesPerStartup`；**显式工具 `memory__stage1_drain` 仍不设限**（保留「显式入口不受门约束」的既有约定）。为整合保底而停手时同样按 `STARTUP_SOURCE_SPACING_MS`（30s）间隔醒来重试，既不 0ms 忙循环也不干等到次日。
+- **可观测**：新增日志 `stage-1 quota reserve held for consolidation: used=X/Y, reserve=R (threshold=T%) — leaving room for phase 2`；原启动趟日志串改为 `stage-1 pass source budget exhausted; …`（语义从「启动趟」改为「本趟」）。
+- **牙齿**：新增 `test/t210-starvation-guard.test.mjs`（**22 断言**）。核心是**假域复现「39 条待提炼 + 当天 24 次额度」**：跑一趟提炼后断言 ① 用掉 ≤ 18（cap 24 − 保留 6）② 门二**放行**（25% ≥ 阈值）③ **整合至少跑一次**（consolidation LLM 调用 ≥1）④ **总纲真发布新版本**（`current.json` 出现并指向版本）⑤ 未整合产物被消化 ⑥（源码级接线锚点）唤醒趟/事件趟都带 per-pass 预算。**改前树（= 还原口 `B8ED3588…`）实测 5 ✓ / 17 ✗ / exit 1**；新树 **22 ✓ / 0 ✗**。文件内 5 条「两树都过」的断言已就地标注**假阳性**、不计入。
+- **不 bump 的理由**：`v0.1.13` **尚未 commit / 未 push**（远端仍是 `v0.1.12` 的 `2b7f666`）⇒ 与 S1 同批并入、**零额外发布成本**；本节的 t206/t208/t210 会在下一次推送里一并成为 v0.1.13。若单独 bump 0.1.14，会让「同一个未发布批次」被拆成两个从未发布过的版本号。
+- 回归：`ALL 72 TESTS PASSED`（基线 71 + 本批 1）；`node --check lib/index.js` 通过。三处 `lib/index.js` SHA 全等 = **`90BF6B1C4628674C76D75C6A925AD2BD3A8A8A1EDCD1FE16B8BDBC89E94AE6AA`**（348,622 B）。
+
+### 追加（同日 · t213）：把 Phase 2 整合的模型调用**真正搬进受限执行者会话**（+ 不依赖控制台的观测 + 显式回落）
+
+- **认账（本批第一件事）**：t187 的「受限执行者」**只做了一半** —— `consolidationExecutorSpec` / `applyExecutorSessionPolicies` 把 `cwd`=记忆根、沙箱 `workspace-write`、审批 `never`、工具白名单 + `deny=['subagent']` 都算好、会话也建起来了，但**整合的模型调用仍走进程内单发** `consolidateWithLlm(prompt)`（t211 实测宿主侧 `sessionStats={turns:0,steps:0,llmMs:0,toolMs:0}` / `blank=true`）⇒ 那层限制**对整合过程一秒都没生效**，执行者会话是个**空壳**。
+- **codex 对照**（镜像 `D:\分类\DSH本体管理\_ref-codex\`，锁定提交 `openai/codex@a592c38c16cdd7623dacc9168926ebccedfb67d3`，见其 `SOURCE.md`；本批引用文件的 SHA 见配套报告）：
+  - **阶段 2 本来就是"把提示词交给一个受限会话去跑"**：`codex-rs/memories/write/src/phase2.rs` **L157-181** 先 `agent::get_prompt` 再 `spawn_consolidation_agent(agent_config, prompt)` —— 模型调用发生在**那个 agent 的轮次**里；`codex-rs/memories/write/src/runtime.rs` **L362-407** 以 `SessionSource::Internal(InternalSessionSource::MemoryConsolidation)` 起线程，再 `start_turn_if_idle(TurnInputRequest::user_input(prompt))` 提交（提交失败即关会话并返回错，**不静默**）。
+  - **受限配置逐项**（`phase2.rs` `mod agent::get_config` **L290-350**）：`cwd =` 记忆根（**L300**）、`ephemeral = true`（L302）、`generate_memories`/`use_memories = false`（L303-304）、`mcp_servers = allow_only(空)`（L308）、**审批 `allow_only(AskForApproval::Never)`**（**L310**）、**禁递归委派 = `features.disable(Feature::Collab)`**（**L312**，另禁 MemoryTool/Apps/Plugins，L313-315）、**沙箱 `SandboxPolicy::WorkspaceWrite { writable_roots: [root], network_access: false, exclude_tmpdir_env_var: true, exclude_slash_tmp: true }`**（**L329-335**）。codex 自己也有这份锁定的测试：`phase2_sandbox_tests.rs` L27-35 / `phase2_workspace_roots_tests.rs` L30-35。
+  - **阶段 1 才是进程内**：`runtime.rs` `stream_stage_one_prompt` **L281-360** 直接 `provider.stream(...)` 收流 ⇒ 「提炼在进程内、整合在受限会话内」**正是 codex 的分工**；本地此前把两件事都放在进程内。
+- **落地（`lib/index.js`）**：
+  - 新增 `EXECUTOR_TURN_TIMEOUT_MS`（**L1557**，10 min）、`EXECUTOR_OUT_SUBDIR`（**L1559**，`.consolidation-out`）、`buildExecutorUserMessage(text)`（**L1562**，`{role:'user',content:[{type:'text',text}],source:{kind:'plugin',plugin:'dsh-memory_rollout'}}`，纯函数）、`withTimeoutMs`（**L1571**）、`sessionEventCount`（**L1582**）、`executorActivity`（**L1595**，`events=a->b turns=N`）、`collectExecutorAssistantText`（**L1610**，事件回读兜底）、`runConsolidationExecutorTurn(...)`（**L1640**）。
+  - **派发与回读**：`agent.followup(message)`（**L1660**；无 `followup` 时退 `agent.send(message,'next-turn',true)` L1661）→ `await withTimeoutMs(agent.whenIdle(), …)`（**L1666**，超时/写冲突都转成 `reason`）→ 回读**优先**读受限会话**写在记忆根内**的产物文件 `<记忆根>/.consolidation-out/<batchId>.json`（**L1674-1678**，同时验证"根内可写"）⇒ 退扫会话 `assistant/message` 事件（**L1681**）。`runConsolidationExecutorTurn` **绝不抛**：任一步不成返回 `{ok:false, reason, sessionId, activity}`。
+  - **调用点**（`processPhase2Batch`，**L4373-4412**）：执行者可用 ⇒ 先在受限会话里跑一轮；产出能解析出 `memory_summary`+`registry` ⇒ 采信（`path='restricted-session'`）；否则**显式回落** `consolidateWithLlm(prompt)`（L4411）+ 一行 `console.warn`（L4410）。
+- **不依赖控制台的观测（本批硬要求）**：`phase2JobSchema` 新增 6 个字段（**L797-804**）—— `executor_path`（`restricted-session` / `in-process-fallback`）、`executor_session_id`、`executor_restricted`、`executor_reason`、`executor_activity`、`executor_source`；**每次整合都写、失败路径也写**（**L4416-4429**，`phase2JobsTable.update`）；写观测失败只 warn（L4428），**不改批的成败**。
+- **测试**：新增 `test/t213-executor-real.test.mjs`（**21 断言 / 5 组**）。T1（核心）：假 `agents` 服务下断言 ① `agent.followup` 真被调（**改前 0 次**）② 派发消息是合法 `UserMessage` 形状、且文本含整合契约标记 `## INCREMENTAL MERGE` ③ 会话活动 `turns>0` ④ **进程内 LLM 零调用**（改前 1 次）⑤ 批记录 `executor_path=restricted-session` ⑥ **结果真从"根内产物文件"回读**（`executor_source=executor-out-file`）⑦ **发布的总纲内容来自受限会话**。T2/T3/T4：派发抛错 / `agents` 服务缺失 / 产出不可解析 ⇒ 三条都断言「**回落 + 原因非空**」。T5：**全部 4 条批记录都带 `executor_path`**（永不静默）。
+- **牙齿**：还原口树（`lib/index.js.pre-executorreal-2026-09-14` = `90BF6B1C…` / 348,622 B）实测 **5 ✓ / 16 ✗ / exit 1**；新树 **21 ✓ / 0 ✗**。**两树都过的断言共 5 条**（4 条已就地标注**假阳性** + 1 条未标注），**不计入**牙齿；另有 1 处标注为「假阳性/健全性」的断言（`导出 buildExecutorUserMessage 且确有派发消息`）在改前树**实为红** ⇒ **按红计入**、标注已更正（不混算、不错算）。**首次牙齿跑不完整**（改前树没派发 ⇒ 测试自己在 L137 上取空数组元素抛 `TypeError` 中断）⇒ 就地加空值守卫后重跑，得到上面完整的 16 红清单（如实自报，守卫不改新树行为）。
+- **不 bump 的理由**：`v0.1.13` **尚未 commit / 未 push**（远端仍是 `v0.1.12` 的 `2b7f666`）⇒ 与 t206/t208/t210 同批并入、**零额外发布成本**；若单独 bump `0.1.14`，「同一个未发布批次」会被拆成两个从未发布过的版本号。
+- 回归：`ALL 73 TESTS PASSED`（基线 72 + 本批 1）；`node --check lib/index.js` exit 0。三处 `lib/index.js` SHA 全等 = **`EB0AD23D30E2F129964A8E629F541B07D2873075F27234CB0F4DE9650BE54FCD`**（360,620 B）；相对还原口 = **1 文件 / 214 插入 / 1 删除**；hunks **9（`-U0` 口径）/ 3（默认 U3 口径）**。
+
+### 追加（同日 · t213）· 已知边界（如实自报）
+
+1. 本批只证到**「接线 / 派发 / 回读 / 观测 / 回落」这一层**（用假 `agents` 服务）：**真实宿主里受限会话是否真起轮次、`meta.cwd` 是否真被接受、工具白名单是否真生效，要重启后实测** —— t187 的第一验收项**仍未勾**，本批不视作已通过。
+2. `.consolidation-out\` 是记忆根内**新增的瞬时点目录**（每批读完即 `rmSync`，L1684；建目录失败不致命，L1650）—— 属新产物，需在管线说明书里登记。
+3. 与 codex 的**残留差异**：codex 用「**校验记忆根里的产物**」判成败（`phase2.rs` **L403-415** `validate_consolidation_artifacts_for_version`），本地是「解析会话写出的 JSON 文本」⇒ 待后续批对齐（已记账）。
+4. `executor_activity` 的 `events=` / `turns=` 都是 best-effort（取不到时 `events=-1`、`turns` 省略），**只作活动证据，不作判据**。
+
+### 追加（同日 · t216 · D1）：**可信引用映射 + 由代码渲染引用** —— 修掉「合法指针被秘密闸门遮掉 ⇒ 整合永久失败」的契约冲突
+
+- **认账（D1 是什么）**：提示词要求模型把结论写成 `… → memories/rollout_summaries/<sessionId>.md`，而发布闸门要求 `redactSecrets(产物) === 产物`；长串启发式（连续 ≥40 字符 + 含数字 + 含特殊字符）会把这条**合法指针**整段遮掉 ⇒ **合法产物被稳定拒绝**（真机：11 条终态失败批、33 次调用全打水漂，`phase2_last_error` 至今残留 `unredacted secret`）。模型被迫退化去写「不含数字的短名」⇒ 现行总纲/注册表里 3 条**悬空引用**。**这是接口契约冲突，不是模型乱写，重试解决不了**（GPT R2 §5.1 独立复现同一结论）。
+- **裁决依据**：GPT R2 §5.2 推荐 **窄范围 B + 轻量 D** ——「来自可信来源清单的精确引用映射，并由代码渲染实际引用」。**未采用** A（把扫描器缺陷固化成永久命名约束）/ C（批量改名）/ 全局放行路径·UUID·哈希 / 把拒绝改成「替换后直接发布」/ 一次性改成全新复杂 JSON 知识图。
+- **修法（R2 §5.2 五步，逐条落在代码里）**：
+  1. **映射**（`buildReferenceMap`）：只由**插件既有记录**产生 —— ① 本批 `stage1_outputs`（来源身份 = `session_id`、源版本 = `source_watermark`）；② 当前权威基线里**已登记**、且能被插件记录解析的引用（含 `rollout_slug` 别名回收）。**只有目标真实存在**的来源进目录；模型/网页声明不了条目；「磁盘上恰有同名文件」**不算**可信。
+  2. **模型只拿代号**（`referenceCatalogText`）：目录形如 `[[REF1]] = memories/rollout_summaries/<sid>.md | watermark=… | lines=1-N | cwd=…`；选哪些来源支持结论由模型决定，**程序不替它推断**支持关系。
+  3. **两类判据分开**（`extractReferences`）：**引用链**只做 映射 / 存在性 / 归属 / 版本·行段 检查；**正文链**照旧走秘密规则。
+  4. **发布器渲染**（`renderPhase2References` → `renderReferencePath`）：有效代号渲染为真实路径；**读工具 / 注入 / 两个权威文件 / 确定性重建路径共用同一约定**（`searchMemoryFiles`、`memoryCitationEntries`、`writeRegistry`、`writeSummary` 一并改为 `memories/…`，不再各写一套）。
+  5. **不再把修好的路径遮回**（`protectReferences`）：过闸门时把**已识别且精确匹配映射**的引用片段换成占位符再跑秘密规则；渲染后的结构字段另按结构判据（允许根 / 越界 / 链接绕行 / 存在性 / 行段）校验。
+- **删掉的逃生口**：旧系统提示词规则 10「若必须引用会话，就把**裸 id 或短 id 单独**写出来」—— 它正是把模型逼成写短名、产生 3 条悬空引用的直接原因；改为「只用目录引用代号，绝不自己写路径 / 文件名 / slug / 会话号」。输入块的 `session=<uuid>` 也改为 `ref=[[REFk]]`（不再把会撞闸门的形态摆到模型面前）。
+- **安全边界（明令保留，逐条有测试）**：① 只对**精确匹配映射**的片段做结构识别 ——「形似 `rollout_summaries/*.md`」**不**豁免、磁盘上有同名文件**也不**豁免；② 引用片段若落在**凭据字段**（`session_id=` / `Cookie:` / `Authorization:` …）的值位置 ⇒ **不**享受结构豁免（**不存在 session_id 全局白名单**）；③ 遗留无法解析的引用 ⇒ 标 `（未验证引用：<name>）`，**不猜测、不为它造空文件、不静默丢弃**；④ 映射外（虚构）引用 ⇒ **整批不发布**。
+- **3 条悬空引用已用可信元数据找回（不猜测）**：短名不是模型瞎编，而是插件自己 `stage1_outputs.rollout_slug` 的值 —— `dsh-backup-cleanup-agents-refresh` → 会话 `244024df-5fbf-4ea9-8671-c8d9183fed20`；`dsh-skill-inventory-subagent-skill-edits` / `dsh-skill-inventory-and-subagent-skill-hardening` → 会话 `9c0c360d-3aad-4886-a876-4597f688be81`（共 4 条产出记录，目标草稿**都真实存在**）⇒ 重整合时会被渲染回真实路径。**同一 slug 指向多个会话 ⇒ 标歧义、不猜**。
+- **不再内联会话号（确定性重建路径）**：`MEMORY.md` 长期记忆行由 `(session=<uuid>, updated=…)` 改为 `(updated=…)`、会话索引行由 `(session=…)` 改为真实指针 —— 因为把 `session=<完整 uuid>` 抄进模型输出的**任何**路径都会撞长串规则（t82 已实测）。身份仍在 `entries` 表与草稿文件名里，信息不丢。
+- **可观测**：`phase2JobSchema` 增 `reference_codes`（本批用到的代号）/ `unverified_references`（未验证的引用名），每次整合都写（**不记原始敏感输出**，R2 §5.5-7）。
+- **测试**：新增 `test/t216-d1-reference-map.test.mjs`（48 处 `check(` → **实跑 51 条断言，全绿**）。A 段纯函数：映射来源 / 路径规范化 / 代号渲染 / 凭据字段不豁免 / 遗留找回与歧义 / 结构判据；**B 段 = 三类材料验收（隔离副本）**：① 合法来源路径**可引用并发布**（含"精确匹配的裸路径形态"）② **虚构路径不发布**（且「磁盘上真有同名文件仍不发布」「形似也不豁免」）③ **真形式凭据仍被拦**（Cookie / Bearer / 认证用 `session_id` / **引用片段落在凭据字段内**）。
+- **牙齿**：**同一份探针**在两棵树上跑 —— 还原口树（`lib/index.js.pre-d1fix-2026-09-14` = `EB0AD23D…` / 360,620 B）**1 ✓ / 7 ✗ / exit 1**；新树 **8 ✓ / 0 ✗ / exit 0**。还原口树上那 1 条 ✓ 是**已标注的假阳性**（「认证用 session_id 仍被拦」两棵树都拦 —— 它抓的不是本批缺陷），**不计入**牙齿。
+- **回归**：`ALL 74 TESTS PASSED`（基线 73 + 本批 1）；`node --check lib/index.js` exit 0。三处 `lib/index.js` SHA 全等 = **`F5D7F50A92848EB3746AAF77AE10582FD0A5A2C18672BDC4E5C7151A9ECC7B9A`**。本批一并改了 3 个既有测试的**引用形态**（`citation-format` 读侧引用加 `memories/` 前缀；`phase2-input-budget-consume` 与 `t80-gate` 的指针改代号 + 为被引用会话补真实草稿），并给 `t80-gate` **新增 3 条**断言（逃生口已移除 / 已改为用代号 / 用户消息含引用目录）—— 断言强度只增不减。
+- **版本口径（R2 §9-C）**：**不 bump，仍 `0.1.13`**（该版本尚未 commit / 未 push ⇒ 并入零额外发布成本）。**点名 SHA**：`F5D7F50A…` 这个构建 = **t206 + t208 + t210 + t213 + t216(D1)**。**不得**把它当成"已经整体验收的同一构建"：各批只在**各自的交付 SHA** 上被独立验证过（t206/t208 @ `B8ED3588…`、t210 @ `90BF6B1C…`、t213 @ `EB0AD23D…`），本 SHA 的整体端到端验收**留给下一次重启后的真机整合**。
+- **codex 口径纠正**：本批依据固定基准 **v1**（`_ref-codex\codex-rs\memories\write\templates\memories\consolidation.md`）—— 该模板要求 `### rollout_summary_files` 行给出**精确文件名 + 独立元数据字段**（cwd/updated_at/thread_id），并明令「missing ⇒ treat as missing evidence、do not invent」（**L832-833 / L863**），与本地修法同向。**不采用** `consolidation_v2.md` 的格式与 10,000 字节要求（v2 只作旁证）。另：**未取得 codex 秘密规则实现**（镜像缺 `codex-rs/secrets/**`）⇒ **不能断言原生"绝不存在任何同类冲突"**。
+
+### 成熟度
+S1 收口（与 D1 **无关、并行**）。宿主侧证据：实际加载的存储域副本 = `@deepseek-ai+dsh-storage-do_95fd490…`（`dsh-web-app@0.1.5-rc.1` 家族解析到的 junction；`0.1.5-alpha.1` 副本内容逐字节相同）其 `lib/index.js` = `E536BA09B7CCC0F10BB54818DFE44454374E5CBF7AEBA140B216BA1CA2E87517`（17,327 B），载入循环 `L368-378` 调 `parseRecord(... => tableSpec.valueSchema.parse(raw))`（**L371**），schema 不符则抛 `invalid-record`（L420-431）。**未 commit / 未 push / 未重启**；第三次推送与 D1 修复合并为一次（本节目前含 t206 / t208 / t210 / t213 四批，届时一并成为 `v0.1.13`）。
+
 ## 2026-09-13 · v0.1.12（t198）：F1 旧版用量字段兼容 —— 读路径认回 `last_used_at`（与 `last_usage` 取较新者）
 
 **来源**：t196 独立验证（裁定通过 9/9）报出的两条**非阻断发现**，本批收口（`lib/` 上一单的冻结正式解冻）。

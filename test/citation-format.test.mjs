@@ -76,14 +76,15 @@ try {
   const recall = tools.memory_recall
   assert.ok(recall, 'memory_recall tool registered')
 
-  // ── [1] entry found in MEMORY.md → `MEMORY.md:N-N` ──────────────────────────
+  // ── [1] entry found in MEMORY.md → `memories/MEMORY.md:N-N` ────────────────
+  // t216（D1）：读工具与发布/注入**共用同一引用约定**（统一 `memories/` 前缀）。
   console.log('[1] citation points at MEMORY.md with a real line range')
   {
     const r = await recall.execute({ query: 'powershell', limit: 3 })
     check(r.entries.length === 1, 'one entry matched (sess-1)')
-    check(/^MEMORY\.md:\d+-\d+\|note=\[.*\]$/.test(r.citation.replace(/[\s\S]*?<citation_entries>\n/, '').split('\n')[0]), 'citation entry is `MEMORY.md:start-end|note=[...]`')
+    check(/^memories\/MEMORY\.md:\d+-\d+\|note=\[.*\]$/.test(r.citation.replace(/[\s\S]*?<citation_entries>\n/, '').split('\n')[0]), 'citation entry is `memories/MEMORY.md:start-end|note=[...]`')
     // e1's line is index 6 (0-based) => line 7.
-    check(r.citation.includes('MEMORY.md:7-7'), 'cities the actual MEMORY.md line 7 for sess-1 entry')
+    check(r.citation.includes('memories/MEMORY.md:7-7'), 'cities the actual MEMORY.md line 7 for sess-1 entry')
     check(!/\bsess-1:\d+\b/.test(r.citation), 'no legacy `sessionId:index` citation form')
   }
 
@@ -92,7 +93,7 @@ try {
   {
     const r = await recall.execute({ query: 'rmbg', limit: 3 })
     check(r.entries.length === 1, 'one entry matched (sess-2)')
-    check(r.citation.includes('rollout_summaries/sess-2.md:1-'), 'cites the session draft file with a line range')
+    check(r.citation.includes('memories/rollout_summaries/sess-2.md:1-'), 'cites the session draft file with a line range')
     check(r.citation.includes('note=[recalled from memory]'), 'citation uses the note=[...] suffix')
   }
 
@@ -106,7 +107,7 @@ try {
     fs.mkdirSync(draftsDir, { recursive: true })
     fs.writeFileSync(path.join(draftsDir, 'sess-3.md'), 'session_id: sess-3\ncwd: C:/sess-3\n\n# 会话草稿\nthe user discussed archive cleaning tooling choices.\n', 'utf8')
     const r = await recall.execute({ query: 'cleaning tool', limit: 3 })
-    const cited = r.citation.includes('rollout_summaries/sess-3.md:')
+    const cited = r.citation.includes('memories/rollout_summaries/sess-3.md:')
     check(!cited, 'draft sharing only a token is NOT cited as evidence (provenance != evidence)')
     check(/unverified:0-0/.test(r.citation) || !r.citation.includes('sess-3'), 'such an entry either falls back to unverified or to a MEMORY.md line, never to the draft line range')
   }

@@ -86,6 +86,12 @@ const MARK_LEN = 10
 
 try {
   await apply(ctx, {})
+  // t216（D1）：引用映射**只收录目标真实存在**的来源（不能核验的来源不给代号）⇒ 被引用的会话必须有真实草稿。
+  const draftsDir = path.join(root(), 'rollout_summaries')
+  fs.mkdirSync(draftsDir, { recursive: true })
+  for (const sid of ['sA', 'sB', 'sN1', 'sN2', 'sBase']) {
+    fs.writeFileSync(path.join(draftsDir, sid + '.md'), `session_id: ${sid}\ncwd: C:/${sid}\n\n# 会话草稿\n- durable fact for ${sid}\n`, 'utf8')
+  }
 
   console.log(`[夹具] 大总纲来源=${FIX.real ? '真实 memory_summary.md' : '合成'}  字符数=${Array.from(REAL_SUMMARY).length}`)
 
@@ -149,7 +155,8 @@ try {
   await tools['memory__phase2_integrate'].execute({})
   check(readCurrent() && readCurrent().version === idA, '超限不发布，current.json 未变')
   await clearQueue()
-  llmResponse = { memory_summary: 'v1\n## 索引\n- 结论A → memories/rollout_summaries/sA.md', registry: '# MEMORY.md\nok' }
+  // t216（D1）：指针改为**目录代号**（代码渲染真实路径）；映射外的路径会被判虚构引用而拒发。
+  llmResponse = { memory_summary: 'v1\n## 索引\n- 结论A → [[REF1]]', registry: '# MEMORY.md\nok' }
   await setMeta(domain, { lastSuccessWatermark: '', lastPhase2At: '' })
   await tools['memory__phase2_integrate'].execute({})
   check(readCurrent().version !== idA, `合规发布新版本 ${readCurrent().version}`)
@@ -177,7 +184,7 @@ try {
   check(readCurrent().version === idN, 't83 负控：普通批照抄 session_id: → 被拒、current.json 未变')
   // 正控：合规（无键名元数据、索引+指针）→ 发布
   await clearQueue()
-  llmResponse = { memory_summary: 'v1\n## 索引\n- 结论N → memories/rollout_summaries/sN1.md', registry: '# MEMORY.md\n- 结论N' }
+  llmResponse = { memory_summary: 'v1\n## 索引\n- 结论N → [[REF1]]', registry: '# MEMORY.md\n- 结论N' }
   await setMeta(domain, { lastSuccessWatermark: '', lastPhase2At: '' })
   await seedOutput(domain, 'j-n2', { source_watermark: 'wmN2', session_id: 'sN2', rollout_summary: 'another fact', generated_at: '2026-01-04T00:00:00.000Z' })
   await tools['memory__phase2_integrate'].execute({})
@@ -187,7 +194,10 @@ try {
   // ── ④/⑤ 一次性强制压缩 + 分层披露 + t82 提示词对齐 ──
   console.log('[④/⑤/t82] 强制压缩：显式触发 + 上限内 + 指针 + 禁 key:value 元数据')
   await clearQueue()
-  const big = 'v1\n' + Array.from({ length: 400 }, (_, i) => `- 结论${i}：` + 'z'.repeat(300)).join('\n')
+  // t216（D1）：压缩批**没有新输入**，其引用目录只能来自「有效基线」——故基线总纲里放一条**可被插件记录
+  // 解析**的指针（sBase 是 stage1_outputs 里真实存在的会话，草稿文件也真实存在），压缩批才能引用它。
+  await seedOutput(domain, 'j-base', { session_id: 'sBase', source_watermark: 'wmBase', rollout_summary: 'base fact', generated_at: '2026-01-01T00:00:00.000Z' })
+  const big = 'v1\n- 结论0 → memories/rollout_summaries/sBase.md\n' + Array.from({ length: 400 }, (_, i) => `- 结论${i}：` + 'z'.repeat(300)).join('\n')
   const idBig = writeCurrent(big, '# MEMORY.md\nbig')
   check(Array.from(big).length > capS, `超限总纲=${Array.from(big).length} > ${capS}`)
   await tools['memory_integrate'].execute({})
@@ -196,7 +206,7 @@ try {
   const cJobs = [...domain.table('phase2_jobs').entries()].filter(([, j]) => j && j.mode === 'compress')
   check(enq.enqueued === true && !!enq.batchId, `compress:true → enqueued（batchId=${enq.batchId}）`)
   check(cJobs.length === 1 && cJobs[0][1].input_ids.length === 0 && cJobs[0][1].change_ids.length === 0, '恰 1 个压缩批且无 input/change')
-  llmResponse = { memory_summary: 'v1\n## 索引\n' + Array.from({ length: 30 }, (_, i) => `- 结论${i} → memories/rollout_summaries/s${i}.md`).join('\n'), registry: '# MEMORY.md\nindex' }
+  llmResponse = { memory_summary: 'v1\n## 索引\n' + Array.from({ length: 30 }, () => `- 结论 → [[REF1]]`).join('\n'), registry: '# MEMORY.md\nindex' }
   await tools['memory__phase2_integrate'].execute({})
   check(lastPrompt.includes('## COMPRESSION MODE'), '压缩批 prompt 含 COMPRESSION MODE')
   check(lastPrompt.includes('ABSOLUTELY FORBIDDEN'), 't82：prompt 含「禁 key: value 元数据」')
@@ -206,6 +216,11 @@ try {
   check(lastPrompt.includes('[REDACTED]'), 't82：要求既有 [REDACTED] 原样保留')
   check(lastPrompt.includes('never attach a label or key to a session id'), 't82：禁止给会话 id 加键名/标签')
   check(!lastPrompt.includes('keep the existing inline style'), 't82：不再建议 (session=<id>) 写法（该写法也会撞门）')
+  // t216（D1）：旧的**逃生口**（"write the bare id or a short id ALONE"）已删除 —— 它正是把模型逼成写
+  // 「不含数字的短名」、从而产生 3 条悬空引用的直接原因；改为「只用目录里的引用代号」。
+  check(!lastSystem.includes('write the bare id or a short id ALONE'), 't216（D1）：逃生口已从系统提示词移除')
+  check(/reference CODE/i.test(lastSystem), 't216（D1）：系统提示词改为「用目录引用代号」')
+  check(lastPrompt.includes('SOURCE REFERENCE CATALOG') && lastPrompt.includes('[[REF1]]'), 't216（D1）：用户消息里带可信引用目录（含代号）')
   // t82 双陷阱实证（探针）：两种键名写法都被拒；裸 id / 短 id 通过
   const UU = '5b54ab55-5a1d-483b-be03-92daef2635ce'
   check(validatePhase2Output({ memory_summary: `v1\n- x session_id: ${UU}`, registry: '# ok' }, { maxSummaryChars: capS, maxRegistryChars: 24000 }).ok === false, 't82 陷阱1：`session_id: <uuid>` 被拒')
@@ -216,7 +231,7 @@ try {
   check(after.version !== idBig, `压缩批成功发布新版本 ${after.version}`)
   const ns = verSummary(after.version)
   check(Array.from(ns).length <= capS, `新总纲=${Array.from(ns).length} ≤ ${capS}`)
-  check(ns.includes('rollout_summaries/s0.md'), '分层披露：含指针')
+  check(/memories\/rollout_summaries\/[^)\s]+\.md/.test(ns) && !ns.includes('[['), '分层披露：含指针（t216：渲染为真实路径、无残留代号）')
   // 发布产物必须仍能过 L3（含安全门）
   check(validatePhase2Output({ memory_summary: ns, registry: '# MEMORY.md\nindex' }, { maxSummaryChars: capS, maxRegistryChars: 24000 }).ok === true, '发布产物仍通过 L3 全部门')
 
