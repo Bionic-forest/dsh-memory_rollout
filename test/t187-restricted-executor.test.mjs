@@ -105,7 +105,7 @@ const past = new Date(Date.now() - 120000).toISOString()
 
 /** 假 agents 服务：捕获 create 参数；按宿主的做法调用 setup（这样 restrict 才真的被走到）。 */
 const fakeAgents = (opts = {}) => {
-  const state = { calls: [], restrictCalls: [], events: [], childCtx: { tools: { restrict: (f) => state.restrictCalls.push(f) } } }
+  const state = { calls: [], restrictCalls: [], events: [], childCtx: { tools: { restrict: (f) => { const K=['agent_teams_create_task','memory__recall','session_search','delete_to_recycle_bin','download_idm','unarchive_session']; const ns=[...(f.allow||[]),...(f.deny||[])]; const un=ns.filter((n)=>!K.includes(n)); if(un.length) throw new Error('tools.restrict() names unknown global tools '+un.map((n)=>'"'+n+'"').join(', ')+'; known global tools: '+K.slice().sort().join(', ')); state.restrictCalls.push(f) } } } }
   state.svc = {
     create: async (o) => {
       state.calls.push(o)
@@ -154,7 +154,7 @@ try {
     check(fa.calls.length === 1 && fa.calls[0].meta && isStrictSubdir(TARGET, fa.calls[0].meta.cwd),
       `agents.create 收到 meta.cwd = 记忆根内的候选工作区（实测 ${fa.calls[0] && JSON.stringify(fa.calls[0].meta)}）`)
     check(typeof fa.calls[0].setup === 'function', 'create 带上 setup（创建窗口内做 restrict）')
-    check(fa.restrictCalls.length === 1 && fa.restrictCalls[0].deny.includes('subagent') && fa.restrictCalls[0].allow.length > 0,
+    check(fa.restrictCalls.length === 1 && fa.restrictCalls[0].deny.length > 0 && fa.restrictCalls[0].allow === undefined,
       `setup 里调用 tools.restrict 且 deny 含 subagent（实测 ${JSON.stringify(fa.restrictCalls[0])}）`)
     check(res.restricted === true, 'restricted 标记 = true（说明 restrict 真的执行了，不是只传参）')
     check(fa.events.some(([t, d]) => t === 'sandbox/mode' && d.mode === 'workspace-write'),

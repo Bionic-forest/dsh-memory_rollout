@@ -48,7 +48,7 @@ function makeFakeAgents(opts = {}) {
         throw new Error(`session "${sessionId}" already exists`)
       }
       state.created.push({ sessionId, meta })
-      if (typeof setup === 'function') setup({ tools: { restrict: () => {} } })
+      if (typeof setup === 'function') setup({ tools: { restrict: (f) => { const K=['agent_teams_create_task','memory__recall','session_search','delete_to_recycle_bin','download_idm','unarchive_session']; const ns=[...(f.allow||[]),...(f.deny||[])]; const un=ns.filter((n)=>!K.includes(n)); if(un.length) throw new Error('tools.restrict() names unknown global tools '+un.map((n)=>'"'+n+'"').join(', ')+'; known global tools: '+K.slice().sort().join(', '));  } } })
       const evs = []
       const agent = {
         id: sessionId,

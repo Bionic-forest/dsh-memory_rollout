@@ -44,7 +44,7 @@ function makeFakeAgents() {
     turns: 0,
   }
   const create = async ({ sessionId, meta, setup }) => {
-    const childTools = { restrict: (f) => { state.restrictFilters.push(f) } }
+    const childTools = { restrict: (f) => { const K=['agent_teams_create_task','memory__recall','session_search','delete_to_recycle_bin','download_idm','unarchive_session']; const ns=[...(f.allow||[]),...(f.deny||[])]; const un=ns.filter((n)=>!K.includes(n)); if(un.length) throw new Error('tools.restrict() names unknown global tools '+un.map((n)=>'"'+n+'"').join(', ')+'; known global tools: '+K.slice().sort().join(', ')); state.restrictFilters.push(f) } }
     if (typeof setup === 'function') setup({ tools: childTools })
     const myEvents = []   // **每个会话自己一条日志**（共享会让上一批的 assistant 文本串到下一批）
     const session = { append: (...a) => { myEvents.push(a) }, events: () => myEvents }
@@ -128,7 +128,7 @@ try {
     check(!!msg && msg.content[0].text.includes('## INCREMENTAL MERGE'),
       '派发文本含整合提示词契约标记（`## INCREMENTAL MERGE` —— 我们那份整合契约随轮次进入会话）')
     const rf = fake.state.restrictFilters[0]
-    check(!!rf && JSON.stringify(rf.allow) === JSON.stringify(['read', 'write', 'edit', 'glob', 'grep']) && JSON.stringify(rf.deny) === JSON.stringify(['subagent']),
+    check(!!rf && Array.isArray(rf.deny) && rf.deny.length > 0 && rf.allow === undefined,
       `（**假阳性**：改前树也过 —— t187 接口层已有）setup 内 restrict 白名单/deny 正确（${JSON.stringify(rf)}）`)
     check(fake.state.turns > 0,
       `会话活动证据：turns=${fake.state.turns}（>0 = 轮次真跑了；t211 实测改前是 turns:0）`)

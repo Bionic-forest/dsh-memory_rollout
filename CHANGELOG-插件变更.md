@@ -2,6 +2,35 @@
 
 遵循《向 Codex 原版系统看齐》工程总纲 §19 工作纪律：每次变更记录对应需求、行为变化、测试与成熟度等级变化。成熟度等级（L0–L4）见总纲 §3。
 
+## 2026-09-14 · v0.1.16（t230）：`tools.restrict()` 工具名契约 —— 从宿主注册表**派生** allow/deny
+
+**来源**：C 的 t229 真机验收（v0.1.15）判**不通过**，新的 blocker `F-N1`（high）。真机 `executor_reason` 逐字：
+`executor-restrictions-not-established: tool-restrict-not-established (tools.restrict() names unknown global tools "read", "write", "edit", "glob", "grep", "subagent"; known global tools: agent_teams_* …, memory__* …, session__* …, delete__*, download_idm, unarchive_session)`
+
+**结构性根因（不是"名字写错了"）**：宿主（**实际加载副本** `@deepseek-ai/dsh-tools` SHA256 `AABA52BF…`/151,784 B）的
+`restrict(filter)` **L2790-2805** 只接受 `view(scope).restrictableNames`（校验在 **L2802-2803**，抛点在 `restrictions.append` **之前**），
+而 `view(scope)` **L2854-2880** 把 `restrictableNames` 收成"**继承层（global + 祖先层）注册的工具名**"——
+⇒ **内建文件工具（read/write/edit/glob/grep）与 `subagent` 根本无法用 allow/deny 表达**。改前 `CONSOLIDATION_TOOL_ALLOW/DENY`（t229 新树 L439/L441）两个数组**全都落空** ⇒ 边界 1 回落 ⇒ **受限轮次从未发生过**。`run_code` 为保留名（L2800 明文禁列）。
+
+**修法（健壮优先，不硬编码）**：新增纯函数 `restrictableGlobalTools(tools, scope)` **运行时从宿主派生**可限制名单：
+① 首选 `view(scope).restrictableNames`（剔除保留名 `run_code`）；② 退路 —— 用一次**注定失败**的 `restrict({deny:['\u0000__probe__']})` 让宿主回吐 `known global tools:` 名单并解析（抛点在 append 之前 ⇒ 无副作用）；
+两条路都产出 `unknownDesired` = **想要但不存在的名字**（`read/write/edit/glob/grep/subagent` ⇒ 批记录 `executor_restrict_unknown`）与 `source`（`view.restrictableNames` / `restrict-error-known-list` / 不可得时的 `restrictable-name-set-unavailable`）。
+实际生效的过滤 = `restrict({ deny: <派生名单> })`（**deny 掉全部可限制的插件工具**：执行者不需要 `memory__*`/`agent_teams_*`/`session_*`/`delete_*`/`download_idm` 中的任何一个）。`CONSOLIDATION_TOOL_ALLOW/DENY` 保留为**能力意图声明**（注释已更正，不再当 restrict 入参）。
+**失效检测（不许静默）**：派生名单为空 ⇒ `restrictError='restrictable-name-set-unavailable'` + `restricted` 保持 false ⇒ **边界 1 照旧拒绝派发**。
+**失败面可见**：批记录新增 `executor_restrict_source` / `executor_restrict_unknown`（不止靠日志）。
+
+**"受限"的新含义（旧说法作废）**：受限 = **cwd 在候选工作区** + 沙箱 `workspace-write` + 审批 `never` + **deny 掉全部可限制的插件工具**。
+- **作废**："工具白名单 = read/write/edit/glob/grep"——这个说法**从来没成立过**；**内建文件工具默认可用**（设计上需要：读输入、写候选产物），它们的边界由 cwd 沙箱保证。
+- **残余面**：**递归无法用 `restrict` 拦**（`subagent`/任何委派工具都不在可限制集合里）；候选选项是委派工具自身的 `maxDepth`/`toolFilter`，**本批不实现**。
+
+**测试（补上本次盲区）**：`test/t230-toolnames.test.mjs` 把**宿主契约搬进测试**——用真机报错逐字回吐的 **32 个** `known global tools` 构造"宿主形 `restrict`"（校验名字，文案/抛点与 L2803 一致），并断言派生名单 ⊆ 宿主契约；四个既有假服务（t187/t213/t220/t224）同步改为**按真实名单校验名字**（改前它们不校验名字 ⇒ 这类"真机专属"失败在测试层看不见）。**还原口树（`lib/index.js.pre-toolnames-2026-09-14` = `F7396F1A…`）上 18 ✗ / 7 ✓**：逐字复现真机报错串、`restricted=false`、批记录无派生字段。
+
+**不回归**：未动 D1 引用映射链、② 门逻辑、④ 判据、`memory__*` 工具 schema、`withWrite`、发布路径既有语义。
+
+**回归**：`ALL 78 TESTS PASSED`（v0.1.15 基线 77 → +1）；`node --check lib/index.js` exit 0。
+
+**生效与验收（必读）**：本版**需重启**才生效；**重启后必须重跑真机验收**才能宣布「受限轮次真发生过」。**新验收判据**（不再看"restricted=true 且白名单=5 个文件工具"）：`executor_path='restricted-session'` + `executor_cwd` 在候选工作区内 + `executor_restrict_source` ∈ {`view.restrictableNames`,`restrict-error-known-list`} + `executor_restrict_unknown` 恰为 `read,write,edit,glob,grep,subagent` + 该会话 `turns/steps ≥ 1`。
+
 ## 2026-09-14 · v0.1.15（t224）：会话 id 与尝试解耦 + F2/F3/F4 收口（真机验收四发现）
 
 **来源**：t223 真机端到端验收（**结果层 D1 真机通过；边界层未取得**）报出的四条发现。

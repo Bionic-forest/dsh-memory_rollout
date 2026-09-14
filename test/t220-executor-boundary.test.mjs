@@ -48,7 +48,7 @@ function makeFakeAgents(opts = {}) {
   const service = {
     create: async ({ sessionId, meta, setup }) => {
       state.created.push({ sessionId, meta })
-      const childTools = opts.noRestrict ? {} : { restrict: (f) => state.restrictFilters.push(f) }
+      const childTools = opts.noRestrict ? {} : { restrict: (f) => { const K=['agent_teams_create_task','memory__recall','session_search','delete_to_recycle_bin','download_idm','unarchive_session']; const ns=[...(f.allow||[]),...(f.deny||[])]; const un=ns.filter((n)=>!K.includes(n)); if(un.length) throw new Error('tools.restrict() names unknown global tools '+un.map((n)=>'"'+n+'"').join(', ')+'; known global tools: '+K.slice().sort().join(', ')); state.restrictFilters.push(f) } }
       if (typeof setup === 'function') setup({ tools: childTools })
       const myEvents = []
       const session = { append: (t, d) => state.policyEvents.push([t, d]), events: () => myEvents }
