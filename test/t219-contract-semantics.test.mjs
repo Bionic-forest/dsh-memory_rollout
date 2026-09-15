@@ -84,9 +84,14 @@ await section('[C1]', async () => {
   console.log('\n[C1] 四类额度口径分开标注（R2 §7）')
   const Q = M.QUOTA_SEMANTICS
   check(!!Q && typeof Q === 'object', 'QUOTA_SEMANTICS 存在（同一份口径供代码/测试/报告引用）')
-  const labels = ['每日 Stage1 尝试上限', '每趟处理上限', 'Phase 2 调用预算', '真实 provider 限额']
+  const labels = ['每日 Stage1 尝试上限', '每趟处理上限', 'Phase 2 启动门（不是调用预算）', '真实 provider 限额']
   const got = [Q.stage1DailyAttempts, Q.stage1PerPassSources, Q.phase2CallBudget, Q.providerRateLimit].map((x) => x && x.label)
   check(JSON.stringify(got) === JSON.stringify(labels), `四项标签齐且分开：${got.join(' / ')}`)
+  // F5 口径（评审 §五.3）：第三项的 label/note 必须把两件事**分开**说 ——
+  //   ①「依 Stage 1 计数决定能否启动整合」（已实现）；②「实际限制整合调用次数/费用」（未实现）。
+  check(String(Q.phase2CallBudget.note).includes('依 Stage 1 计数决定能否启动整合')
+    && String(Q.phase2CallBudget.note).includes('未实现'),
+    '第三项把「启动门」与「实际限制整合次数/费用」分开表述（后者明标未实现）')
   check(Q.stage1DailyAttempts.isProviderQuota === false && Q.stage1DailyAttempts.debitedBy.length === 1,
     '第一项：本地发明、只由 stage-1 提炼记账、非 provider 额度')
   check(Q.phase2CallBudget.debitedBy.length === 0 && Q.providerRateLimit.enforcedAt.length === 0,

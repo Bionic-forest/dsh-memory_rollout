@@ -195,7 +195,7 @@ await section('[S3]', async () => {
 })
 
 await section('[S4]', async () => {
-  console.log('\n[S4] 边界 2b：执行者动了权威面 ⇒ 该轮产物被**拒收**')
+  console.log('\n[S4] 边界 2b：执行者动了权威面 ⇒ 该轮产物被**拒收**（且整批不发布）')
   const counters = { inProcess: 0 }
   const fa = makeFakeAgents({
     onFollowup: ({ msg, state }) => {
@@ -213,15 +213,23 @@ await section('[S4]', async () => {
   })
   await apply(ctx, {})
   await seedBatch(domain, 's-220-d')
+  const curBefore = readCurrent()
   await REG['memory__phase2_integrate'].execute({})
   const job = lastJob(domain)
   const cur = readCurrent()
   const published = cur ? verSummary(cur.version) : ''
   check(String(job.executor_boundary_violation || '').includes('MEMORY.md'),
     `批记录登记越界证据（executor_boundary_violation="${String(job.executor_boundary_violation || '').slice(0, 60)}"）`)
-  check(job.executor_path === 'in-process-fallback', `该轮产物被拒收并显式回落（executor_path=${job.executor_path}）`)
+  // F5 契约改向（评审 §三 F5）：越界那一轮**确实跑在受限会话里**（观测如实，不再落成 fallback）；
+  //   产物被拒收后**整批不发布、交回重试** —— 旧契约「拒收 + 用构建 prompt 时的旧权威回落重发」
+  //   会拿旧材料完整重写，可能覆盖等待期间新发布的合法结论，故停用。
+  check(job.executor_path === 'restricted-session', `越界那一轮跑在受限会话里（executor_path=${job.executor_path}）`)
+  check(job.status === 'retry_wait', `F5：整批不发布、交回重试（status=${job.status}）`)
+  check(String(job.last_error || '').includes('baseline-changed'),
+    `拒发理由写明基线变化（"${String(job.last_error || '').slice(0, 60)}…"）`)
+  check(String(curBefore && curBefore.version) === String(cur && cur.version),
+    `权威指针未推进（前=${String(curBefore && curBefore.version)} 后=${String(cur && cur.version)}）`)
   check(!published.includes('by-tampered-executor'), '被污染的那一轮**没有**被采纳进权威版本')
-  check(published.includes('by-inprocess-llm'), '权威版本来自外层自己的（进程内）结果')
   check(fa.state.cancelled.length >= 1, '越界后该执行者会话也被停掉')
 })
 
