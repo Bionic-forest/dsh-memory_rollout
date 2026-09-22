@@ -2,6 +2,294 @@
 
 遵循《向 Codex 原版系统看齐》工程总纲 §19 工作纪律：每次变更记录对应需求、行为变化、测试与成熟度等级变化。成熟度等级（L0–L4）见总纲 §3。
 
+## 2026-09-22 · v0.1.27：推送前独立审核三修（F1 吞错 / F2 一次请求硬约束 / F3 升级边界）
+
+**来源**：GPT《推送前独立审核》F1/F2/F3 + 用户口径「修完就推（实验性项目）」。**基线**：部署副本 `lib/index.js` = SHA256 `FC47550074B03FDB58D85A2AB9AD49A2E4F125F43B035AED5D3AC9DEB73B7277`（523,754 B，v0.1.26）。
+
+### 一、F1：真实模型错误不再被吞（结构化类别 + 脱敏原因）
+
+- **旧缺陷（审核命中）**：`consolidateWithLlmRaw` 在**服务缺失 / 路由缺失 / 一般异常 / 正常空返回**四类下**一律返回 `null`**，外层只记 `background-no-output` ⇒ `background-llm-error` 在**真实入口**下看不到真实异常；`t244` 只断言"字段非空"，所以"四类可区分"不成立。
+- **修法（在实际调用边界分类）**：新增 `callConsolidationLlmRaw(prompt)` → `{ ok, text, category, detail, stream_calls, redacted_input_chars }`，类别字面量：
+  `llm-service-unavailable` / `llm-route-unavailable` / `llm-stream-error` / `llm-reasoning-effort-unsupported` / `llm-empty-output` / `llm-empty-prompt`；`detail` 经 **`redactSecrets` + 截断 200 字符**（不落完整请求/凭据）。
+- **持久化三处同源**：`executor_reason` = `background-<category>[: <detail>]`、新增批字段 **`cost_failure_category`**（结构化类别）、`last_error` **改为真实原因**（旧实现固定写含糊的 `llm-unavailable`）。
+- **删掉吞错壳**：`consolidateWithLlmRaw` / `consolidateWithLlm`（已无调用点）**本轮删除** ⇒ 只剩一条路径，不再有"悄悄把类别吞掉"的第二条路。
+
+### 二、F2：**一次请求**是硬约束（移除内部兼容重试 + 计数在实际调用边界）
+
+- **旧缺陷（审核隔离复现）**：外层在 `callRaw` 前 `+1`，内层遇到"推理强度不支持"会**去掉该参数再调一次** ⇒ `actualStreamCalls=2 / recordedModelCalls=1`，还能提交。
+- **修法**：① **删除**该内部重试 —— 推理强度不被支持 ⇒ 归类为 `llm-reasoning-effort-unsupported` 失败，交**既有批次重试机制**（每次重试是**新的批尝试**，`attempt_count` / `last_error` / `available_at` 可见）；② 计数**只在真正的 `llmSvc.stream(...)` 调用处 +1**（返回体的 `stream_calls`），外层照抄 ⇒ **`recordedModelCalls === actualStreamCalls` 由构造保证**。
+- **牙齿实测**：同一场景（`consolidationReasoningEffort:'high'` + 宿主拒绝）在 v0.1.26 树上 **actual=2 / recorded=1**（审核的原话复现），本版 **actual=1 / recorded=1** 且不发布。
+
+### 三、F3：升级边界（旧 `true` 留在实验载体，不是安全回退）
+
+- 五种配置的**最终载体**：未配置 / 旧 `false` / 显式 `'plugin-background'` ⇒ `plugin-background`；旧 `true` / 显式 `'restricted-session-experiment'` ⇒ **留在实验载体**。
+- ⇒ 文档口径写死：**旧 `true` 不得称作安全回退**（它带 D-7 残余面：工作区指令注入 + 内建工具面），**旧安装应显式改成 `consolidationExecutor: 'plugin-background'`**。
+- **最小加固（不改用户配置、不加设置界面）**：跑在实验载体时 → 日志一条 + 批字段 `executor_carrier_note`（= 常量 `CARRIER_EXPERIMENT_WARNING`，含 `not-a-safe-fallback` 与 D-7 说明）。
+
+### 四、计量口径文案（局部诊断字段，不是全域账目）
+
+- `input_chars` = **脱敏前** prompt 长度，**不含**独立 system 提示；
+- `source_bytes_read = 0` 只表示**后台包装本身不额外读源**，**≠**"本批没读过任何来源"；
+- `wall_clock_ms` = **本包装内**一次调用往返耗时，**不是**"批次创建 → 发布"全链耗时；
+- `model_calls` = 实际 stream 调用次数（与宿主实际调用**必须相等**）。
+（`runConsolidationBackgroundTurn` 注释与方案文档 §3.2 同步写明。）
+
+**测试**：新增 `test/t245-carrier-push-review.test.mjs`（**62 断言 / 0 失败**：F1 四类完整入口——类别两两不同 + 都不发布 + `current.json` 未生成；F2 不重试 + 计数相等 + 重试为**新一轮** + 成功路径闭合；F3 五种配置的最终载体 + 告警字段）。`t244` 扩到 **76 断言**（结构化调用 + 六类失败类别两两不同 + 计数照抄实际调用次数 + 实验告警字段）。
+**牙齿对照（v0.1.26 树）**：`t245` **39 ✓ / 23 ✗**（F1 类别全缺、`executor_reason=background-no-output`、`last_error=llm-unavailable`；F2 实测 **actual=2 / recorded=1**）、`t244` **53 ✓ / 23 ✗**；本版树上两者全绿。全套 **93/93 PASS / 0 FAIL / 0 HANG**（92 → 93）；`node --check lib/index.js` exit 0。
+**还原口**：按"同一份文件只留最新 1 个"重置为 **`lib/index.js.pre-t35-2026-09-22`**（= v0.1.26 字节 `FC475500…` / 523,754 B），旧的 `.pre-t32`/`.pre-t33`（此前已清）与 `.pre-t34`（本轮清，条件已满足）**均已移除**。
+
+**未取得**：① **自然触发**的后台发布（当前没有"内容新增且未用过联网工具"的合格根会话）② **生产失败样本**（v0.1.26 真机那次是 attempt 0 一次过；本版失败路径只有假宿主证据）③ **同输入 A/B 成本对照** ④ **实验路径残余未解决**（D-7/D-4：内建文件工具 + `subagent` 仍无法用名单表达；实验载体依然带告警）⑤ **「正确复用」判据已写但实测未取得**（方案 §3.3 三条判据已预先写好，尚未跑对照）。
+
+## 2026-09-21 · v0.1.26：**载体根治**（默认改走后台单次直调，会话路径降级为实验选项）+ D-7 发布面结论
+
+**来源**：T35 单 —— 用户拍板「**直接根治，不做过渡**」+ 收窄口径「**只能用一个直接的 API 请求来处理**」+ 评审项 **D-7**（发布面注入风险）。
+**基线**：部署副本 `lib/index.js` = SHA256 `0A6CA71032BD7259F0E579218EE974B973176B441A66FD92D6C4D3804EF5A820`（512,780 B，v0.1.25）。
+
+### 一、默认载体改为「后台单次直调」（不建会话）
+
+- **新默认**：`consolidationExecutor`（schemastery `z.union([z.boolean(), z.const('plugin-background'), z.const('restricted-session-experiment')])`，**默认 `plugin-background`**）。客户端 `select` 两选项（`lib/client.js` 已支持 `select`）。
+- **后台载体**：新增 `runConsolidationBackgroundTurn({prompt, callRaw, batchId})` —— 一次 `ctx.llm` 调用（复用 `consolidateWithLlmRaw` 的**同一路由**：`config.consolidationProvider/Model` 否则 `agentDefaultModel.currentSelection()`；D1 `redactSecrets` 照旧），产物交给**同一套** `parseExtractionJson` → `validatePhase2Output` → 证据/基线复核 → 发布链。
+- **不建会话**：默认路径下 `ctx.agents.create` / `presets.resolve` / `presets.mount` / `tools.restrict` **一次都不调用**（t244 以计数器实测 0 / 0 / 0 / 0），批次记录 `executor_path='plugin-background'`、`executor_session_id=''`、`executor_carrier='plugin-background'`。
+- **实验选项**：`'restricted-session-experiment'`（以及历史布尔 `true`）才走旧的受限会话路径，且回落时路径名保留 `in-process-fallback`（如实区分"试过实验但失败"）；`false` 等同后台载体。旧默认（每批必建会话）**不再存在**。
+
+### 二、砍掉有界循环代码面（本轮连接口都不做）
+
+`readEvidence` / `readCurrentMemory` / `proposeChange` 这套"有界操作循环"**不落任何代码**（`lib/index.js` 内仅剩一行注释说明该决定，符号计数 0）。将来确需按需查证再加，且**必须带上限与白名单**。**输入完整性不因此迁就单次调用**：不删、不截断（t244 用输入尾部哨兵 `TAIL-EVIDENCE-MARK-9f2b` 断言它出现在实际送给模型的那一份 prompt 里）。
+
+### 三、自建观测（8 个成本字段 + 可诊断失败）
+
+批次记录新增 `cost_wall_clock_ms` / `cost_model_calls` / `cost_turns` / `cost_input_chars` / `cost_output_chars` / `cost_source_bytes_read` / `cost_extra_session_artifacts` / `cost_failure_visibility`，外加 `executor_carrier`。失败理由细分四类：`background-llm-unavailable` / `background-empty-prompt` / `background-llm-error: …` / `background-no-output`（`executor_reason` 落原样）。
+
+### 四、实现过程中实测到的两处**观测性回归**（已修，均是真缺陷不是放水）
+
+1. **含糊失败理由**：后台路径起初按"空即拒"提前拦下解析结果 ⇒ 批记录只剩 `llm-unavailable`，把"哪一项不合法"丢掉（`t224` 实测：期望 `memory_summary` 校验错，实得 `llm-unavailable`）。改为**解析成功即照原样交给下游校验链**，由 `validatePhase2Output` 给精确原因；`background-output-unparsable` 只留给真正解析不出的文本。
+2. **活动串互相矛盾**：实验载体回落时，后台调用成本串（`model_calls=… input_chars=…`）**覆盖**掉了会话侧活动证据（`events=… turns=…`），于是失败理由 `executor-no-activity` 与活动串自相矛盾（`t242` 实测）。改为**仅在还没有会话证据时**才用成本串填充 `executor_activity`（成本另有 `cost_*` 字段）。
+
+### 五、D-7（发布面注入）结论
+
+- 机制**端到端复现**（加载副本 `dsh-agent-instructions`，`discoverBaselineInstructionFiles` + `renderWorkspaceContext`）：当 `$DSH_HOME` 落在**任何 git 树**内时，工作区指令发现链 = `["$DSH_HOME/AGENTS.md","AGENTS.md"]`，项目 `AGENTS.md` 会**进入执行者上下文**；不在 git 树内则只有 `$DSH_HOME/AGENTS.md`（实测两份哨兵文本逐字命中，且渲染帧文本与真机执行者会话 seq 10 注入**逐字相同**）。
+- **发布结论**：随本版**默认载体切换**，该注入面在生产路径上**不再被触发**（后台载体无会话、无系统提示注入、无工具面）；`restricted-session-experiment` **默认关、不随发布启用**，其残余面（内建文件工具 `read/write/edit/glob/grep/subagent` 无法用名单 deny 表达 = 旧 D-4/D-7）**只报不改**，留作实验选项的已知边界。
+
+**测试**：新增 `t244-background-carrier`（**57 断言 / 0 失败**：载体归一化、后台回合单元 + 四类可诊断失败、默认载体集成计数 0、实验载体仍建 1 会话、输入完整性哨兵、成本字段、失败可见性）。三处"实验契约"测试显式声明载体（`t187` 两处 T4/T5、`t220`、`t224`、`t230` T6、`t242`、`t243` 两处）。全套 **92/92 PASS / 0 FAIL / 0 HANG**（91 → 92）；`node --check lib/index.js` exit 0。
+
+**还原口**：`lib/index.js.pre-t34-2026-09-21` = v0.1.25 字节（SHA `0A6CA710…` / 512,780 B），退出条件 = 本版重启后真机验收通过。
+
+**部署**：三份文件（`lib/index.js` `FC475500…` / 523,754 B、`lib/client.js` `9AB0B147…`、`package.json` `1C18E7A3…`）已同步到两个部署副本，**三处 SHA 全等、hardlink 拓扑未变**。**运行态判据**：进程 PID 47796 启动 `2026-09-22 19:28:21` **晚于**部署 mtime 19:08:13 ⇒ 该次重启后**已加载 v0.1.26**。
+
+**真机验收（2026-09-22 20:02–20:04，**显式驱动**批次 `p2-mucmk80z-r2f0at`，来源会话 `session-019a8470-…`）**：
+- `executor_path=executor_carrier='plugin-background'`（`executor_reason` 空）；**零新增会话**（执行者工作区 bucket 5→5、全库会话文件 171→171、台账 `executorSessions` 仍 4 条、`executor_session_id=''`、`cost_extra_session_artifacts=0`、`.consolidation-out` 不存在）；
+- **正确发布**：`committed`（attempt 0）→ `current.json` = 该版本 → `versions/p2-mucmk80z-r2f0at/` 三文件齐（manifest 602 B / 16,790 B / 21,283 B）；
+- **成本字段**：`wall_clock_ms=75288 / model_calls=1 / turns=1 / input_chars=25004 / output_chars=21632 / source_bytes_read=0 / extra_session_artifacts=0`，`failure_visibility='batch-record:reason/cost (no session log)'`；
+- **无注入面**：无会话 ⇒ 无 `agent-instructions` 注入；代码面 `runConsolidationBackgroundTurn` 唯一宿主交互是 `callRaw`（L2652），调用方只在实验载体进建会话分支（L6204-L6205）；`t244` 断言默认路径 `agents.create`/`presets.*`/`tools.restrict` 全 0、`llm.stream` 恰 1 次。
+- 顺带：本机 **19:58:32 出现第二趟 `scanLastReason=wake`**（boot 19:28:32 +30 分 00 秒）⇒ D-5 连续两趟成立。
+
+**未取得**：① **自然**（非显式驱动）的后台批次 —— 当前三个"有新内容"的根会话全被 `external_context` 资格挡下（用过 `web_search`/`web_fetch`），其余根会话已提炼或超龄，故自动批次何时出现取决于"新的合格来源"② phase-2 真机失败样本（本轮 attempt 0 一次过）③ 同输入 A/B 成本对照 ④ D-7 在实验载体上的残余面未消除（只报不改）。
+
+## 2026-09-21 · v0.1.25：**内部身份判据收窄**（真机复核更正 D-3）
+
+**来源**：T34 真机验证单 —— 验证 v0.1.24 的两项改动时，真机扫描**实测**暴露 v0.1.24 引入的**判据过宽**：boot 扫描 `internal=87`，其中 **77 条是普通子代理会话**（UUID id、由 `subagent` 工具创建、带 `delegationDepth>0`），被误标成"内部执行者"。
+
+**为什么是缺陷**：行为没错（这批会话本来就由 `isRootSessionHeader` 按**非根**跳过、不会成为来源），但 ① `internal` 计数被高估 ② 理由串写成 `internal-executor-depth`（复核者会误以为它们是执行者）③ 它们被写进 `scanSeen`（容量 1000，会挤压真实条目）。
+
+**修法（收窄，不改变隔离能力）**：`internalExecutionReason` 现在只用 ① 我们自己的**创建台账** `stage1_meta.meta.executorSessions` ② 执行者 id 前缀 `p2-exec-`（**辅助**，覆盖台账缺失/旧执行者）。`delegationDepth` **退回**它本来的角色：血缘/兜底非根判据（`startConsolidationExecutor` 仍写它；万一前缀与台账都丢了，仍能按非根挡下），**不再**单独当内部身份。
+
+**测试**：`t243` 增加 D-3 回归（43 断言）：普通子代理会话（UUID + `delegationDepth>0`）⇒ `internal=0 / nonRoot=1` 且**不写 scanSeen**；`internalExecutionReason` 对"只有 delegationDepth"返回 `''`。全套 **91/91 PASS / 0 FAIL**。
+
+**真机复核（v0.1.24，2026-09-21 22:02:47 重启那趟）**：扫描 `{"scanned":105,"candidates":0,"enqueued":0,"nonRoot":1,"fresh":8,"tooOld":1,"done":8,"sourceGone":0,"deferred":0,"internal":87}` —— **内部会话未入队、未读源、水位已推进**（行为层达标）；标注层按本条更正。收窄后的真实计数需**下次重启**复核（预期 `internal`≈10、`nonRoot` 回升）。
+
+**未取得**：① 用官方读取接口读回**新建**执行者日志（重启后无新批次 ⇒ 无新会话）② 同输入 A/B 成本对照 ③ 「已正确复用」仍无判据。
+
+### 同批：D-5（真机复核暴露的独立缺陷）—— A 面周期扫描在安静进程里不会自维持
+
+**实测**：2026-09-21 22:02:47 重启、boot 扫描 22:02:56；此后 **40 分钟**无 wake 扫描（`scanLastAt` 未变、状态库自 22:02:56 起零写入）。
+
+**机制（代码路径）**：唤醒计时器有两个写者 ——
+① `armStage1Wake()`（启动趟后）`next = min(队列到期, lastScan + 30min)`；
+② **每趟 drain 收尾**只按 `nextStage1WakeAt()`（**队列到期**）重排，而队列空时 `wakeAt = null` ⇒ `scheduleStage1Wake(null)` **清掉计时器** ⇒ ① 排好的"扫描到期"被覆盖，之后**再没有任何 wake**，A 面周期扫描停摆（与 T29 "扫描周期 30 分钟"的承诺不符）。
+
+**修法**：① 新增纯函数 `nextWakeAtWithScan({wakeAt, scanLastAtIso, now, intervalMs})`（把"扫描到期"并进唤醒），`armStage1Wake` 与 drain 收尾共用；② drain 收尾在 `wakeAt == null` 时**不清定时器**（保留扫描到期），只有确实没有定时器时才按扫描周期补一个 —— **不动** t132 那条"预算耗尽 ⇒ 跨日唤醒 = 本地次日 00:00"的契约；③ 唤醒定时器 `unref()`：后台定时器**不该单独把进程吊住**（生产里宿主本有监听句柄，照常触发；测试进程不再被挂住）。
+
+**测试**：`t243` 增 `[243-8]`（47 断言）：队列无到期时仍按"上次扫描+周期"排唤醒、队列更晚取扫描、队列更早保留队列、无扫描记账以 now 起算。全套 **91/91 PASS / 0 HANG**（`t80-gate` 曾因本项挂 >90s，`unref()` 后自然退出）。
+
+## 2026-09-21 · v0.1.24：**内部执行来源隔离** + 消息契约补 `id` + 成功分支保留限制观测（D-1）
+
+**来源**：外部裁决《rollout：后台静默与执行者架构的路线裁决-2026-09-21》**§九**（维护方下一批只交两件：短期正确性收口 + 长期载体方案）。
+**基线**：部署副本 `lib/index.js` = SHA256 `5E1C81219A9916118905301A7C22BBD4830E4BBE467E46BF73D77AF9304C446C`（498,897 B，v0.1.23＝真机首次跑通的那一版）。
+
+### 一、内部执行来源隔离（最优先）
+
+裁决依据：现有根会话判据（`lib/index.js` 的 `isRootSessionHeader`）只排 `parentSession` / `origin==='subagent'` / 正 `delegationDepth`，**不足以**证明"内部整合执行者不会被来源扫描消费"；真机状态库里已出现 `p2-exec-*::…` 来源作业与 `last_skip_reason=empty_source` 痕迹 ⇒ 风险从"待验证"升级为"已知会进来源作业"。
+
+- **可信身份（名字前缀只作辅助）**：新增导出 `internalExecutionReason({header, sessionId, ledger})` →
+  ① `header.delegationDepth > 0`（**我们建会话时写入**的宿主字段，`dsh-session` 的 `validateSessionHeader` 校验并持久化进会话头，跨重启可读）；
+  ② 我们自己的**创建台账** `stage1_meta.meta.executorSessions`（新 helper `recordExecutorSession()`，容量 200，落既有 meta 记录、**不新增表**）；
+  ③ 名字前缀 `p2-exec-`（**仅辅助**：只用于覆盖本改动之前创建的旧执行者会话）。
+  三者返回**不同理由串**，便于复核"凭什么认出它"。
+  创建时写入：`agents.create({ meta: { cwd, agentPreset, delegationDepth: 1 } })`；**不用** `origin:'subagent'`
+  （那会落到宿主的 subagent 归属路由 `hasApiSessionSubagentOwner` → 可能干扰官方读取取证）。
+- **新入口**：`ingestSessionById` 入口最前 + 读回头之后再各判一次 ⇒ `reason='internal-executor-session'`、
+  **不入队、不记碑**；三个触发面（A 扫描 / B 显式 / C 删前）共用此一处。
+- **队列里已存在的内部作业**：drain 领取后、**读源之前**判身份 ⇒ 直接 `succeeded_no_output` +
+  `last_skip_reason='internal_executor_session:<理由>'`，**不读源、不进模型、不重试**（`pending` 与
+  `failed_retryable` 都被这条路收掉）。
+- **扫描**：内部会话在根会话判据**之前**单独计数（新增 `stats.internal`）并**推进 scanSeen 水位**
+  （"永不入队"是终局决定，不必每周期重查）；工具输出 schema 同步加 `internal`。
+
+### 二、消息契约：`user/message` 必须带非空 `id`
+
+`buildExecutorUserMessage()` 之前返回 `{role, content, source}`，**缺 `id`** ⇒ 加载副本 `dsh-session`
+（SHA `05E94F57…`）的 `assertMessageEventShape` 会在读回时抛
+`session event at seq N lacks an identified message`，会话被官方读服务判 `SESSION_QUERY_CORRUPT_SESSION`
+（v0.1.23 真机实测：跑通的那次执行者会话"跑得通、读不回"）。现在补齐身份（缺省 `exec-<nonce>`；派发时用
+稳定 id `exec-<batchId>-<attemptTag>`）。**历史坏日志不批量重写、不删除。**
+
+### 三、D-1：成功分支保留最小必要的限制观测
+
+`phase2_jobs` 成功分支重建 `executorObs` 时补回 `restrictUnknown` / `restrictSource`（真机成功路径曾把这两个
+审计字段写成空串）。**最小必要**，不扩成新审计系统。
+
+**测试**：新增 `t243-internal-source-isolation`（**40 断言**：身份判定优先级 / 创建写入可信记录 + 台账 /
+扫描两例（新式标记、旧式前缀）不消费且不读源 / 显式入口拒绝 / 队列内 `pending`+`failed_retryable` 被收掉且**不读源** /
+消息 id 契约 + 派发路径 id / **D-1 成功路径集成**）。
+**官方校验器实测（不是断言字段存在）**：用加载副本 `dsh-session` **导出的** `snapshotSessionEvent`（内部即
+`validateSessionEventData` → `assertMessageEventShape`）对三种形态逐一判定 —— 旧形态（无 id）**REJECTED**
+（逐字同生产错误 `session event at seq 1 lacks an identified message`）、新形态（非空 id）**通过**、
+空串 id **REJECTED**、对照组（role 改错）**REJECTED**（`message must have role "user"`，证明该路径确实在工作）。
+**牙齿对照（v0.1.23 基线）**：`t243` 实测 **16 通过 / 24 失败**。全套 **91/91 PASS / 0 FAIL**（90 → 91）；`node --check` exit 0。
+**未取得**：① 用官方读取接口读回**新建**的受控执行日志（需先重启创建新会话）② 「已正确复用」仍无判据
+③ 空壳自动清理真机仍未触发。
+
+## 2026-09-21 · v0.1.23：**跑完整个流程**（执行者按宿主配方装配 + 活动口径换成真 API + 失败路径全收口 + 空壳会话不留残留 + 悬空会话容错）
+
+**来源**：用户新单 T31「下一个版本力求能够跑完整个流程」，并入两条同族小项（① 执行者会话泄漏到用户会话列表 ② 会话目录被清掉后的悬空引用容错）。
+
+**基线**：部署副本 `lib/index.js` = SHA256 `317252F578A73B388DFBF846653DD1E2DB89ABD0D1703428D82D5C9A20275AF7`（475,785 B，v0.1.22）——即真机那次"有回落、无受限轮次"的版本。
+
+### 真机根因（v0.1.22 那次的实测证据，锁定到行）
+
+- 执行者会话**真建了、限制真建立了**（`executor_restricted=true`、`executor_restrict_source=view.restrictableNames`），但一轮**没有任何助手输出**、也没有模型请求。
+- 根因在宿主 loop 的**请求配置解析**：`@deepseek-ai/dsh-agent-loop`（**加载副本** 0.1.5-rc.1，SHA `257EB83C00A05EE068E9F4BA80CA71AB94E3A1275D24B7A0CF5038FF23DD0FD8`）
+  **L1132-1133** `provider: this.options.provider ?? ""` / `model: this.options.model ?? ""`；
+  **L1149** `throw new Error('agent "…" has no provider/model: set AgentOptions.provider and AgentOptions.model …')`。
+  而我们建执行者会话时**既不传 `agentOptions` 也不挂 preset** ⇒ 只要走到请求配置就必抛；而 `kick()` 的 `catch` **吞掉**该错误（只发 `agent/error` 事件）⇒ 外层只见"无产物"。
+- 叠加一条**观测缺陷**：旧探针读 `agent.session.events`，但加载副本 `dsh-session`（SHA `05E94F57D96E7979670A5B51024C8591572EB0051CE793613DBDEC35CF2C47BF`）的 `Session` **没有** `events` 访问器（只有 `ownEvents()` / `snapshotEvents()`，`lib/types/index.d.ts` L187/L192）⇒ 批次里落 `events=-1->-1`。另：插件里**没有** `llmMs` 字段，那条指标作废。
+
+### 变更（`lib/index.js`）
+
+1. **按宿主正规配方装配执行者**（`startConsolidationExecutor`）：照 `dsh-api-session-controller`（SHA `16ECB48F…`）的 `composeAgent` L354-367 / `agentOptions()` L456-462 / `createOrAdopt` L445-454 ——
+   ① `agentPresets.resolve(id)` 取 preset id 写进 `meta.agentPreset`（缺省=部署默认；可用新配置键 `executorAgentPreset` 点名）；
+   ② `agentOptions = {provider, model}`（来自 `agentDefaultModel.currentSelection()`）；
+   ③ `setup` 里 `agentPresets.mount(agentCtx, id)`。**顺序有意：mount 先于 restrict**（mount 走 `bindScopeParent`，预设工具进**祖先层** ⇒ 进 `restrictableNames` ⇒ 能被 deny 覆盖，**不是**放宽限制）。
+   缺模型路由 ⇒ **派发前** `executor-model-route-missing` fail-closed；挂预设失败 ⇒ `preset-not-mounted` fail-closed 并停掉刚建的会话。
+2. **活动口径换成本宿主真有的 API**：新增导出 `sessionEventStats(session)`（`ownEvents()` → `snapshotEvents()` → 老副本 `events` 三层兜底，带口径名）；`executorActivity` 落 `events=<b>-><a>(<basis>) turns=<AgentStatus 字符串>`，**不再写 `-1`**（读不到就写 `unreadable`）。
+   `AgentStatus` 在本宿主是**字符串**（`'idle' | 'running'`，`dsh-agent` SHA `B05AA36F…` 的 `runtime-types.d.ts` L90），旧代码按 `status.turns` 读 ⇒ 恒 undefined。
+3. **"受限轮次真发生"变成门**：本轮事件数必须**严格增长**（宿主 loop 开一轮第一件事就是 append `turn/start`，L926），否则 `executor-no-activity` 拒收（不假装跑过）；计数读不到时记 `unverifiable`，不假通过。
+4. **失败/提前 return 全部收口到 stop/dispose**：`executor-no-output` 与 `executor-stale-output` 这两条旧实现**直接 return**（用户 GUI 里累积了 10 个 `executor-workspace` 空会话）⇒ 现在统一走 `failClosed()`（先停再返回），成功路径也停（释放活体）；调用方另有 `stopExecutorIfAlive()` 兜底。
+5. **宿主 `agent/error` 捕获**：`setup` 里订阅 `agent/error`，把 loop 吞掉的失败原因（如 `has no provider/model`）落进批记录 —— 这是"受限轮次为什么没跑起来"的第一手证据。
+6. **空壳执行者会话不再留残留**：新增导出 `cleanupEmptyExecutorSession()`。清空判据 = **模型从未回复**（`assistantEvents===0`）**且**是我们自己的 id（`p2-exec-<batchId>-…`）**且**配置允许（新键 `executorEmptySessionCleanup`，默认 true）；手段用宿主唯一受支持的会话移除通道 —— 既有工具 `delete_sessions`（`dsh-archive-flow` SHA `1D4E19A9…`：移动到 `_deleted-sessions-backup`，可恢复）。**有模型输出的一律保留**（那是本轮证据）。宿主**没有**服务级删除 API（provider 方法面实测无 delete/remove）。
+7. **悬空引用容错**：新增导出 `executorSessionGone()`（活体注册表 → 官方 `sessionPersistence.list()`，**绝不抛**）：会话目录被外部清掉时，停止/清理/探测都只记 note，**不改批状态、不擦 `executor_session_id`**，只追加 `executor_session_missing_at` 标记。
+8. **批记录新增观测面**：`executor_preset_id` / `executor_preset_source` / `executor_provider` / `executor_model` / `executor_preset_mounted` / `executor_assembly_error` / `executor_activity_gate` / `executor_agent_errors` / `executor_assistant_events` / `executor_cleanup` / `executor_session_missing_at`。
+9. **两个新配置键**：`executorAgentPreset`（text，默认 ''）、`executorEmptySessionCleanup`（toggle，默认 true）；加进 `Config` 与 `CONFIG_FIELDS`（`OVERLAYABLE_KEYS` 由后者派生 ⇒ GUI/覆盖层可改）。
+
+**测试**：新增 `t242-executor-full-flow`（**57 断言**：① 六条失败路径全部 cancel+dispose ② 活动口径三层兜底且不出现 `-1` ③ 装配（preset/模型/mount 顺序/fail-closed/deny 覆盖预设名）④ 活动门 passed/failed ⑤ 空壳清理六例 ⑥ 会话消失：stop/探测/清理都不抛不挂 + **同一场景跑两遍（会话在 / 会话没了）批次判定一致**）；并给 t187/t213/t230/t241 的假 ctx 补上 `agentDefaultModel`（装配现在硬要求模型路由，与宿主 loop L1149 同一条要求）。
+**牙齿对照（v0.1.22 基线 = 部署副本 `317252F5…`）**：`t242` 实测 **15 通过 / 42 失败**。全套 **90/90 PASS / 0 FAIL**（89 → 90）；`node --check` 双 exit 0。
+**未取得**：真机"跑完整个流程"必须**重启**后才有意义（本单不做真机跑）；受限执行者真跑出模型轮次仍**未取得**。
+
+## 2026-09-21 · v0.1.22：**评审三项收口**（删前判据绑定本次水位 / 删除结果按契约判定 / 扫描故障不推进水位 / 修服务接线）
+
+**来源**：用户转交《rollout 独立评审与路线裁决》（2026-09-21）的 T30 令 —— 只交三件事：① 删前保护收口（含删除返回契约 + 路由级测试）② 扫描故障恢复收口 ③ 修服务接线。**不含**真机闭环（需用户确认的重启窗口，另行安排）。
+
+**基线**：部署副本 `lib/index.js` = SHA256 `D1372C65A93D87A14400E1EEA73564F5CBB1165FCA0DA5D4EDF60FDEB577D44B`（457,524 B）—— 正是评审亲手测的那一份；本批对它的 T30 净改动 = **33 个 U0 hunk / +281 −53 行**（`lib/client.js` 6 hunk / +11 −7）。
+
+**R1 · P1：删前判据绑定「本次来源水位」（原为「草稿文件存在」）**
+- 新增 `draftEvidenceOf(sessionId, watermark)`：**三项全满足**才 `ok:true` —— ① `stage1_jobs` 里 `<sid>::<watermark>` 终态为 `succeeded_with_output`（`pending`/`running`/`failed_*`/`succeeded_no_output` 一律不放行）② 该作业的 `stage1_outputs` 带 `source_ref` 且 `validateSourceRef` **现在就能读出**该证据段 ③ 草稿文件**非空**。纯读判定，不写盘、不调模型。
+- **两个入口同时换用**：B 工具 `memory_ingest_session` 的 `ingested`、C 路由 `/dsh-memory_rollout/ingest-and-delete` 的放行条件（旧代码两处都是 `draftLanded` = `existsSync`）。
+- C 路由另加**放行前复查**：再走一次统一摄入口，若来源水位已变 ⇒ 为新内容**入队**并返回 `source-changed-since-enqueue`、**本次不删**；复查时读不到来源 ⇒ `source-recheck-unavailable`、同样不删（保守）。
+
+**R1b · P2：调用返回 ≠ 删除成功**
+- 新增导出 `judgeDeleteToolResult(result, sessionId)`，按**实际注册工具的返回契约**判定：真实定义在
+  `D:\软件\Deepseek-安全副本\.dsh\plugins\dsh-archive-flow\index.mjs` **L274-L443**（SHA256 `1D4E19A95951EADD3B02686F9F18855C26A9586F98D801B20C6F15E2FC8A3E1A`），
+  返回 `{dryRun, targets, deleted, skippedLive, skippedBackup, backupDir, details:[{sessionId, action, backupPath?}], note?}`，`action ∈ {deleted, skipped-live, skipped-missing, skipped-backup}`。
+- 只有本会话明细 `action==='deleted'` 才算真删成功；`skipped-live`（会话仍活跃被护栏跳过）/`skipped-missing`/`skipped-backup`/`dry-run`/**返回体不认识** 一律 `deleted:false` + 明确 `deleteOutcome`，**不自动补另一套删除逻辑**、**不吞错**。
+
+**四层口径分开报（评审 §四）**：路由响应新增 `stages = { enqueued, draft_evidence_readable, published_authoritative_version:'unjudged', reused_by_model:'unjudged' }`；
+文案不再说"已记忆"，改为「本次内容已提炼成草稿（证据可读）」并显式注明**不表示已发布进权威记忆、更不表示以后会被模型用对**。
+
+**R2 · P1：暂时读不到来源被永久记成扫描完成**
+- `ingestIdleScan` 的 `scanSeen`（**完成水位**）**只在"确知已入队/已处理"时推进**：`queued:true` 或 `reason==='already-ingested'`；
+  `source-unavailable` / `generate-memories-disabled` 等"尝试过但失败"只计新增的 `stats.deferred`（工具输出 schema 同步加 `deferred` 字段），**不写**完成水位 ⇒ 恢复后**同一 mtime 仍会被重新入队**。
+- 不新增失败管理平台：重试节奏就是既有扫描周期（30 分钟），读失败那一趟**不会**产生模型调用（无作业入队）。
+
+**R3 · P1（目标阻断）：受限执行者被真实宿主服务访问规则挡住**
+- 根因：`setup(childCtx)` 收到的是**上下文**（宿主 `dsh-agent-loop` `setupAndPublish` → `setup?.(prepared.agent.ctx)`），读 `childCtx.agent` 会在**参数求值期**撞 Cordis 的 `internal/get` 门：`cannot get property "agent" without inject` ⇒ 外层记成「限制未建立」⇒ 真实整合永远走进程内回落。
+- 修法：`startConsolidationExecutor` 改调 `restrictableGlobalTools(tools)`（**不再读** `childCtx.agent`）；`restrictableGlobalTools` 的主路径改为**一次注定失败的 `restrict({deny:['\u0000__probe__']})` 探测**，让宿主把 `view(scopeOf(tools.ctx)).restrictableNames` 逐字回吐（抛点在 `layers.effect(…append…)` 之前 ⇒ **无副作用**，且这就是 `restrict()` 稍后校验用的**同一集合**）；视图路径只作**交叉核对**，且只有与权威集完全一致才记为视图来源。
+- **不吞错、不放宽**：拿不到权威名单时显式标 `view-set-not-authoritative` / `restrictable-name-set-unavailable` 并**照旧回落**，绝不假装 `restricted=true`。
+
+**测试**：新增 `t241-review-r1r2r3`（**66 断言**：R1 路由级四组 + R1b 契约七例 + R2 故障恢复 + R3 服务访问门，删除服务为**只计数**的模拟器，全程不碰真实会话）；`t238` 收紧两处（`awaitDraft` 语义 = 本次水位证据可读；理由须逐字指向 stage-1 状态，不再接受笼统 `timeout`）。
+**牙齿对照（评审基线 = 部署副本 v0.1.21 `D1372C65…`）**：`t241` 实测 **25 通过 / 37 失败**（该文件共 66 条断言；失败项含 **6 条 section 中断占位**，即 31 条断言级红 + 10 条因中断未走到），逐条复现评审的四个复现（旧草稿即删、拒绝体仍报 `deleted:true`、`scanSeen` 无条件推进、`without inject` 回落）；`t238` 实测 **9 通过 / 1 失败**（`reason=timeout`）。改后 `t241` **66/66**、`t238` **10/10**。
+全套 **89/89 PASS / 0 FAIL**（88 → 89）；`node --check lib/index.js`、`lib/client.js` 双 exit 0。
+**未取得（如实登记）**：真机闭环（受限执行者真跑出模型轮次与正确产物）需**重启后**才可测 —— 当前进程 PID 早于新构建，本批**不**声称已验证。
+
+## 2026-09-17 · v0.1.21：**统一摄入口 + 三个触发面**（静置扫描 / 显式点名 / 删前按钮）+ D2 碑 + 两个配置键
+
+**来源**：用户拍板开工（T29）+ 用户对 T24/T25/T26/T27 的逐条裁定（归档降为兼容层、三入口同一管线、静置判据、删前按钮、年龄窗口一起进配置）。
+
+**口径**：**一个统一摄入口 + 三个触发面**（A 静置扫描 / B 显式点名 `memory_ingest_session` / C 删前按钮），三者共用
+**入队**（`enqueueStage1JobIntoTable`，键 `<sid>::<contentWatermark>`）、**去重**（`stage1_jobs` + `stage1_seen`）、
+**预算/保底门**（在 drain 内，入口不绕过）、**"已记忆"判定**（**stage1 草稿落盘** = `rollout_summaries/<sid>.md`）、
+**产物形态**（同一草稿文件的追加块）。
+
+**变更（`lib/index.js`）**
+- **统一摄入口 `ingestSessionById()`**：`session/disposed` 的入队逻辑**收敂到此一处**（不许两套）；读源失败（语料已不在）⇒ 记 D2 碑。
+- **A 静置扫描 `ingestIdleScan()`**：数据面只用**官方** `sessionPersistence.list()`（取 `{header, revision, sizeBytes}`），
+  时间取 `locate(header).path` + `fs.stat`（回退 `revision` 的 mtimeNs）；候选 = **根会话**（`isRootSessionHeader`）+
+  **静置窗口**（`minRolloutIdleHours`，默认 6h）+ **年龄窗口**（`maxRolloutAgeDays`，默认 10d）+ **每趟有界**
+  （复用 `maxSourcesPerStartup` 的 per-pass 语义）；触发 = **启动趟 + 既有 stage-1 唤醒**
+  （`armStage1Wake()` 把"扫描周期 30 分钟"叠加进**同一个** `scheduleStage1Wake` 计时器，**不新增定时器平台**）。
+  **不读归档账本、不监听任何第三方插件状态**（归档兼容层本轮不做，见下）。
+- **B 显式入口**：新工具 `memory_ingest_session(sessionId, { awaitDraft, timeoutMs })`（默认只入队；`awaitDraft:true` 等到草稿落盘，上限默认 10 分钟）。
+- **C 删前按钮（纯插件路线 R1①②）**：宿主路由 `POST /dsh-memory_rollout/ingest-and-delete` +
+  设置页「记忆并删除」操作区。状态机：入队 → 等草稿落盘（≤10 分钟）→ **成功才调用既有删除动作**
+  （`ctx.tools.get('delete_sessions')`，**我们不实现删除**）；**失败/超时 ⇒ 一律不删** + 文案
+  「提炼失败，暂停删除」/「未在 T 分钟内完成，已暂停删除」；删除工具不可用 ⇒ 如实报告、不静默。
+  **不改/不 hook 既有删除工具**（R2 = 长在 `dsh-chat-manager` 右键菜单里，需改第三方 ⇒ 本轮不做）。
+- **D2 碑**：`stage1_meta.meta.unrefined`（**不新增表/schema**）—— 源已不在时**只登记**
+  （`source-unavailable-at-ingest` / `-at-drain`，含 `wasEnqueued`/`attempts`），**不读已删语料、不重试抢救、不拦删除、不催办**，
+  且**不依赖 `dsh-archive-flow`**（判定只靠官方持久化读失败 + 自己的台账）。
+- **两个配置键**（同处、同机制）：`minRolloutIdleHours`（默认 6，1–720）、`maxRolloutAgeDays`（默认 10，1–3650）；
+  加在 `Config` schema 与 `CONFIG_FIELDS`（后者现**导出**，`OVERLAYABLE_KEYS` 由它派生 ⇒ 设置页可改、覆盖层可写、
+  **GUI 改即时生效**；手改文件需重启）。
+- **向后兼容**：`readStage1Meta()` 容忍"极简假表无 `get`"（历史测试用的假表）；空源/短源**照旧入队**（由 drain 判 `succeeded_no_output`）。
+
+**测试**：新增 4 个回归 —— `t237-idle-ingest-scan`（11✓）、`t238-ingest-session`（9✓）、`t239-config-idle-window`（11✓）、`t240-unrefined-tombstone`（12✓）；
+另更新 `t193-tool-output-schema` 的样本表（新工具 `memory_ingest_session` 有必填参数）。
+**牙齿对照（T29 前树 = `b96feb9`）**：t237 **3✗**、t238 **3✗**、t239 **7✗**、t240 **4✗**（均为断言级红）。
+全套 **88/88 PASS / 0 FAIL**（84 → 88）；`node --check lib/index.js`、`lib/client.js` 双 exit 0。
+
+**未取得 / 边界**：真机行为（静置扫描真的在真机入队、按钮真的删掉一个会话）未取得 —— 未重启、未驱动浏览器；归档兼容层**本轮不做**（理由见工作区报告 §4）。
+
+## 2026-09-16 · v0.1.20：设置页「记忆库」在新宿主不可见 —— 客户端半补 inject 契约
+
+**来源**：用户报告（新宿主 0.1.5-rc.1）设置侧栏只有 `通用设置 / Theme·外观 / 模型 / 插件 / Agent 预设 / 对话完成音效 / 桌宠配置`，**没有 rollout / 记忆库**那一项。
+
+**根因（现测，非推测）**：新宿主的客户端运行器规定**插件上下文只暴露它在 `inject` 里声明的服务** ——
+`@deepseek-ai/dsh-cordis-client-runner\lib\client.js`（SHA `E78C94D66A75D69448179EC58C17EED8435415109B963A0FFCA903CAF2F8EF03`）：L314「`ctx.serviceName` access is gated by the fiber's `inject` declaration」、L320–L323 未声明即报错、L581 用 `fiber.inject` 决定等待哪些服务；
+而本插件客户端半**没有 `exports.inject`**、只 `ctx.get('slots')` ⇒ 在该模型下取到 `undefined`
+⇒ 被自己的 `if (slots === undefined) return` **静默吞掉** ⇒ `settings.section` 从未注册 ⇒ 页面不出现。
+对照**可见页面**的样板 `dsh-done-sound\lib\client.js`（SHA `A69858B0DCC0F32EE42A06D8D668AC62CA867CCB4C581F71B0F786C1A5E4BC9E`）：
+L1357 `exports.inject = ['slots', 'remote', …]`、L1331 `ctx.slots.inject('settings.section', …)`、`label` 传**字符串**。
+
+**变更（`lib/client.js`，仅此一个文件）**
+1. 新增 `exports.inject = ['slots']`（按新契约声明用到的服务）；
+2. `apply()` 改用服务属性 `ctx.slots`（带 `try` 与 `ctx.get('slots')` 回退，兼容旧宿主/测试环境）；
+3. `label` 由 `() => '记忆库'` 改为**字符串** `'记忆库'`（新契约里 label 是"注册方本地化的显示文本"）。
+
+**测试**：新增 `test/t236-client-settings-page.test.mjs`（在 Node 里加载**真实** `lib/client.js` + 假 React/假 ctx 复刻上述 gate）：
+**改前树 8✓/8✗ → 改后树 11✓/0✗**（改前：`inject=undefined`、`register` 0 次；改后：声明 `['slots']`、注册 1 次、label 为 string）。
+`node --check lib/client.js` exit 0；全套 **84/84 PASS / 0 FAIL**（83 → 84）。
+
+**未取得 / 边界**：宿主**不重启** ⇒ 浏览器里的实际显示未取得（本轮只做源码级 + Node 级 + 部署字节级证据）；`lib/client.js` 由宿主按内容哈希组合 URL 直接提供，是否需要重启/仅刷新页面见工作区报告《rollout-设置不可见定位与修复-2026-09-15.md》。
+
 ## 2026-09-15 · v0.1.19：F2 / F5 返修（版本身份贯通全过程 + 基线复核进发布写锁）+ F1 措辞收窄
 
 **来源**：独立复核《rollout-F1F2F5修复-独立复核答复-2026-09-15.md》§3/§4/§5/§6 —— 裁决：**F1 输入层通过**（报告措辞超范围）、**F2 不通过**、**F5 部分通过**。本条只做它要求的**衔接收口**，不扩面、不拆多个大计划。

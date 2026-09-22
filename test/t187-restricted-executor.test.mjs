@@ -17,6 +17,12 @@ import { makeCtx, seedOutput } from './lib/helpers.mjs'
 const PLUGIN = new URL('../lib/index.js', import.meta.url).href
 const m = await import(PLUGIN)
 const { apply } = m
+/**
+ * v0.1.23：执行者装配现在**必须**有模型路由（照宿主 loop 的硬要求：没有 provider/model 时
+ * `dsh-agent-loop` L1149 直接抛 `agent "…" has no provider/model`）。测试的假 ctx 也要给
+ * `agentDefaultModel`，否则命中的是"故意 fail-closed"的那条路（另有用例专门测它）。
+ */
+const MODEL = { currentSelection: () => ({ provider: 'test-p', model: 'test-m' }) }
 // 改前树上没有这个导出：用安全包装，让"缺导出"表现为**断言红**，而不是测试中途崩溃（牙齿要红在断言上）。
 const startExec =
   typeof m.startConsolidationExecutor === 'function'
@@ -148,7 +154,7 @@ try {
   console.log('[T2] ctx.agents.create 的参数 + 会话策略事件')
   {
     const fa = fakeAgents()
-    const ctx = { get: (k) => (k === 'agents' ? fa.svc : undefined) }
+    const ctx = { get: (k) => (k === 'agents' ? fa.svc : k === 'agentDefaultModel' ? MODEL : undefined) }
     const res = await startExec({ ctx, memoryRoot: TARGET, sessionId: 'p2-exec-t2' })
     check(res.ok === true, `建会话成功（ok=${res.ok}）`)
     check(fa.calls.length === 1 && fa.calls[0].meta && isStrictSubdir(TARGET, fa.calls[0].meta.cwd),
@@ -169,7 +175,7 @@ try {
     const seen = { setMode: [], setPolicy: [] }
     const ctx = {
       get: (k) =>
-        k === 'agents' ? fa.svc : k === 'sandboxPolicy' ? { setMode: (s, mode) => seen.setMode.push(mode) } : k === 'approval' ? { setPolicy: (a, p) => seen.setPolicy.push(p) } : undefined,
+        k === 'agents' ? fa.svc : k === 'sandboxPolicy' ? { setMode: (s, mode) => seen.setMode.push(mode) } : k === 'approval' ? { setPolicy: (a, p) => seen.setPolicy.push(p) } : k === 'agentDefaultModel' ? MODEL : undefined,
     }
     const res = await startExec({ ctx, memoryRoot: TARGET, sessionId: 'p2-exec-t2b' })
     check(res.ok === true && seen.setMode[0] === 'workspace-write' && seen.setPolicy[0] === 'never',
@@ -191,7 +197,7 @@ try {
   {
     const fa = fakeAgents()
     const { ctx, domain, tools, root } = newCtx({ agents: fa.svc })
-    await apply(ctx, {})
+    await apply(ctx, { consolidationExecutor: 'restricted-session-experiment' })
     await seedOutput(domain, 'o-t187', { source_watermark: 'wm-t187', session_id: 's-t187', rollout_summary: 't187', phase2_batch_id: 'B187', selected_for_phase2: false, generated_at: past })
     await putPhase2Job(domain, 'B187', { status: 'pending', input_ids: ['o-t187'], available_at: past })
     consolidationCalls = 0
@@ -219,7 +225,7 @@ try {
   {
     const fa = fakeAgents({ throwOnCreate: true })
     const { ctx, domain, tools, root } = newCtx({ agents: fa.svc })
-    await apply(ctx, {})
+    await apply(ctx, { consolidationExecutor: 'restricted-session-experiment' })
     await seedOutput(domain, 'o-t187b', { source_watermark: 'wm-t187b', session_id: 's-t187b', rollout_summary: 't187b', phase2_batch_id: 'B187b', selected_for_phase2: false, generated_at: past })
     await putPhase2Job(domain, 'B187b', { status: 'pending', input_ids: ['o-t187b'], available_at: past })
     consolidationCalls = 0

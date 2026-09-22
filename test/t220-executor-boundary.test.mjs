@@ -130,7 +130,7 @@ await section('[S1]', async () => {
     get: (k) => (k === 'agents' ? fa.service : k === 'llm' ? makeLlm(counters) : k === 'agentDefaultModel' ? { currentSelection: () => ({ provider: 'p', model: 'm' }) } : undefined),
     tools: regTools,
   })
-  await apply(ctx, {})
+  await apply(ctx, { consolidationExecutor: 'restricted-session-experiment' })
   await seedBatch(domain, 's-220-a')
   await REG['memory__phase2_integrate'].execute({})
   const job = lastJob(domain)
@@ -153,7 +153,7 @@ await section('[S2]', async () => {
         : k === 'llm' ? makeLlm(counters) : k === 'agentDefaultModel' ? { currentSelection: () => ({ provider: 'p', model: 'm' }) } : undefined),
     tools: regTools,
   })
-  await apply(ctx, {})
+  await apply(ctx, { consolidationExecutor: 'restricted-session-experiment' })
   await seedBatch(domain, 's-220-b')
   await REG['memory__phase2_integrate'].execute({})
   const job = lastJob(domain)
@@ -182,7 +182,7 @@ await section('[S3]', async () => {
     get: (k) => (k === 'agents' ? fa.service : k === 'llm' ? makeLlm(counters) : k === 'agentDefaultModel' ? { currentSelection: () => ({ provider: 'p', model: 'm' }) } : undefined),
     tools: regTools,
   })
-  await apply(ctx, {})
+  await apply(ctx, { consolidationExecutor: 'restricted-session-experiment' })
   await seedBatch(domain, 's-220-c')
   await REG['memory__phase2_integrate'].execute({})
   const cwd = fa.state.created[0] && fa.state.created[0].meta && fa.state.created[0].meta.cwd
@@ -211,7 +211,7 @@ await section('[S4]', async () => {
     get: (k) => (k === 'agents' ? fa.service : k === 'llm' ? makeLlm(counters) : k === 'agentDefaultModel' ? { currentSelection: () => ({ provider: 'p', model: 'm' }) } : undefined),
     tools: regTools,
   })
-  await apply(ctx, {})
+  await apply(ctx, { consolidationExecutor: 'restricted-session-experiment' })
   await seedBatch(domain, 's-220-d')
   const curBefore = readCurrent()
   await REG['memory__phase2_integrate'].execute({})

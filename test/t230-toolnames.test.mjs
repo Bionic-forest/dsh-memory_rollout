@@ -86,6 +86,9 @@ const hostShapedRestrict = (known, sink) => (filter) => {
   return () => {}
 }
 
+/** v0.1.23：执行者装配必须有模型路由（照宿主 loop L1149 的硬要求）⇒ 假 ctx 也要给 agentDefaultModel。 */
+const EXEC_MODEL = { currentSelection: () => ({ provider: 'p', model: 'm' }) }
+
 // ── T1：契约层——补丁/派生的名字必须**全部**在宿主可限制名单内 ────────────────────
 await section('[T1]', async () => {
   console.log('\n[T1] 契约层：宿主视图路径派生 + 想要但缺失的名字显式上报')
@@ -147,7 +150,7 @@ await section('[T4]', async () => {
       return { session: { append: () => {} }, agent: { id: o.sessionId } }
     },
   }
-  const res = await startExec({ ctx: { get: (k) => (k === 'agents' ? svc : undefined) }, memoryRoot: target, sessionId: 'p2-exec-t230-t4' })
+  const res = await startExec({ ctx: { get: (k) => (k === 'agents' ? svc : k === 'agentDefaultModel' ? EXEC_MODEL : undefined) }, memoryRoot: target, sessionId: 'p2-exec-t230-t4' })
   check(res.restricted === true && res.ok === true,
     `限制**真建立**（restricted=${res.restricted} ok=${res.ok}；改前树因名字不匹配 ⇒ restricted=false）`)
   check(sink.length === 1 && Array.isArray(sink[0].deny) && sink[0].deny.length > 0 && sink[0].allow === undefined,
@@ -189,9 +192,9 @@ await section('[T5]', async () => {
       return { session: { append: () => {} }, agent: { id: o.sessionId } }
     },
   }
-  const ok = await startExec({ ctx: { get: (k) => (k === 'agents' ? svc : undefined) }, memoryRoot: target, sessionId: 'p2-exec-t230-t5' })
+  const ok = await startExec({ ctx: { get: (k) => (k === 'agents' ? svc : k === 'agentDefaultModel' ? EXEC_MODEL : undefined) }, memoryRoot: target, sessionId: 'p2-exec-t230-t5' })
   check(ok.restricted === true, '契约内派生 ⇒ 正常建立（对照组）')
-  const bad = await startExec({ ctx: { get: (k) => (k === 'agents' ? badSvc : undefined) }, memoryRoot: target, sessionId: 'p2-exec-t230-t5b' })
+  const bad = await startExec({ ctx: { get: (k) => (k === 'agents' ? badSvc : k === 'agentDefaultModel' ? EXEC_MODEL : undefined) }, memoryRoot: target, sessionId: 'p2-exec-t230-t5b' })
   check(bad.ok === false && String(bad.reason).includes('executor-restrictions-not-established'),
     `宿主拒绝时**回落且写明**（reason=${String(bad.reason).slice(0, 88)}…）`)
   check(String(bad.reason).includes('unknown global tool'),
@@ -237,7 +240,7 @@ await section('[T6]', async () => {
     get: (k) => (k === 'agents' ? svc : k === 'llm' ? llm : k === 'agentDefaultModel' ? { currentSelection: () => ({ provider: 'p', model: 'm' }) } : undefined),
     tools: { register: (t) => { if (t && t.name) REG[t.name] = t } },
   })
-  await apply(ctx, {})
+  await apply(ctx, { consolidationExecutor: 'restricted-session-experiment' })
   await seedOutput(domain, 'o-t230', { session_id: 's-t230', source_watermark: 'wm-t230', rollout_summary: 'durable t230', generated_at: new Date(Date.now() - 120000).toISOString() })
   await setMeta(domain, { lastSuccessWatermark: '', lastPhase2At: '' })
   domain.table('phase2_jobs').put('B230', {

@@ -118,7 +118,7 @@ await section('[F1/F2]', async () => {
       ? { memory_summary: '', registry: '' }
       : { memory_summary: 'v1\n## t224-inprocess', registry: '# MEMORY.md\nt224-inprocess' }))
       : k === 'agentDefaultModel' ? { currentSelection: () => ({ provider: 'p', model: 'm' }) } : undefined))
-  await apply(ctx, {})
+  await apply(ctx, { consolidationExecutor: 'restricted-session-experiment' })
   await seedOutput(domain, 'o-t224', { session_id: SID, source_watermark: 'wm-t224', rollout_summary: 't224 fact', generated_at: past })
   await putPhase2Job(domain, 'B224', { input_ids: ['o-t224'] })
   await setMeta(domain, { lastSuccessWatermark: '', lastPhase2At: '' })
@@ -211,7 +211,7 @@ await section('[F3-e2e]', async () => {
       } }
     : k === 'llm' ? makeLlm(counters, () => ({ memory_summary: 'v1\n## t224-inprocess', registry: '# MEMORY.md\nt224-inprocess' }))
       : k === 'agentDefaultModel' ? { currentSelection: () => ({ provider: 'p', model: 'm' }) } : undefined))
-  await apply(ctx, {})
+  await apply(ctx, { consolidationExecutor: 'restricted-session-experiment' })
   // 先放一份"含旧 slug 指针"的当前权威版本（= 基线）
   const vd = path.join(root(), 'versions', 'p2-base-t224')
   fs.mkdirSync(vd, { recursive: true })
@@ -246,7 +246,7 @@ await section('[F4]', async () => {
   const { ctx, domain } = mkCtx((k) => (k === 'agents' ? fa.service
     : k === 'llm' ? makeLlm(counters, () => ({ memory_summary: 'v1\n## t224-inprocess', registry: '# MEMORY.md\nt224-inprocess' }))
       : k === 'agentDefaultModel' ? { currentSelection: () => ({ provider: 'p', model: 'm' }) } : undefined))
-  await apply(ctx, {})
+  await apply(ctx, { consolidationExecutor: 'restricted-session-experiment' })
   await seedOutput(domain, 'o-t224c', { session_id: S, source_watermark: 'wm-c', rollout_summary: 'c', generated_at: past })
   await putPhase2Job(domain, 'B224c', { input_ids: ['o-t224c'] })
   await setMeta(domain, { lastSuccessWatermark: '', lastPhase2At: '' })

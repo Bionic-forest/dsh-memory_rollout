@@ -150,6 +150,9 @@ try {
     memory_note: [{ content: 't193 probe note', slug: 't193-probe-note' }],
     memory_integrate: [{}],
     memory_precompact: [{ content: 't193 probe checkpoint', title: 't193' }],
+    // T29：`memory_ingest_session` 的 `sessionId` 是**必填**参数；本测试对所有 memory* 工具默认用 `{}`
+    //  调用 ⇒ 必填参数的工具必须在样本表里给出样本（与上面几个工具同一处理）。
+    memory_ingest_session: [{ sessionId: 's-t193-ingest-probe' }],
   }
 
   for (const name of names) {
