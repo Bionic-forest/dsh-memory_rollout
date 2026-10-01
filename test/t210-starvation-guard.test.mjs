@@ -65,7 +65,7 @@ process.env.DSH_HOME = tmp
 let extractionCalls = 0
 let consolidationCalls = 0
 const msgEvent = (id, text) => ({ type: 'user/message', seq: 0, time: 0, surfaceOp: 'append', data: { id, role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text }] } })
-const readSession = async (id) => ({ session: { version: 0, id, cwd: 'C:/' + id, createdAt: 0 }, events: [msgEvent(id, 'this is a long enough message for session ' + id + ' that definitely reaches the model extraction step now')] })
+const readSession = async (id) => ({ session: { version: 4, isSeeded: false, id, cwd: 'C:/' + id, createdAt: 0 }, events: [msgEvent(id, 'this is a long enough message for session ' + id + ' that definitely reaches the model extraction step now')] })
 const EXTRACTION = { rollout_summary: 'sum ' + Math.random().toString(36).slice(2, 8), raw_memory: 'raw', slug: 'note', keywords: '', title: 't' }
 const CONSOLIDATION = { memory_summary: 'v1\n## consolidated', registry: '# MEMORY.md\nok' }
 const llmMock = {

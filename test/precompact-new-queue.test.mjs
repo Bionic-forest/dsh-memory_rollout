@@ -48,13 +48,26 @@ const check = (cond, msg) => {
 
 try {
   await apply(ctx, { autoTrigger: 'sessionEnd', precompactAuto: true })
-  assert.ok(eventHandlers['session/event'], 'session/event handler registered')
+  // C4（本批授权改写）：契约 §C4 ④ 把**空监听** `session/event` 删了 ⇒ 原断言"handler registered"翻为
+  //   "**未**注册"。原意（compaction/start 不自动入队 / 活跃会话不持久）在新语义下**更强地成立**：
+  //   监听器根本不存在。下方用 `dispatchSessionEvent()` 做**两棵树都能跑**的派发（改前树有监听、改后树没有），
+  //   行为断言（不产生 job、不写旧管线文件）**一字未改**。
+  assert.ok(!eventHandlers['session/event'], 'session/event handler NOT registered (C4 删空监听后)')
   assert.ok(ctx.tools['memory_precompact'], 'memory_precompact tool registered')
+  let sessionEventSeen = false
+  /** 派发一次 session/event；返回是否真的存在监听器（改前树 true、改后树 false）。 */
+  const dispatchSessionEvent = async (sess, ev) => {
+    if (typeof eventHandlers['session/event'] !== 'function') return false
+    sessionEventSeen = true
+    await eventHandlers['session/event'](sess, ev)
+    return true
+  }
 
   console.log('[1] compaction/start → M2：不再自动入队（活跃会话不持久）；旧管线文件不写')
   {
     const sess = { id: 'c1', header: { cwd: 'C:/c1' }, deriveMessages: () => [] }
-    await eventHandlers['session/event'](sess, { type: 'compaction/start' })
+    const hadHandler = await dispatchSessionEvent(sess, { type: 'compaction/start' })
+    check(!hadHandler, `session/event 无监听器 ⇒ compaction/start 根本没人接（改前树此处为 true）`)
     const jobs = jobListOf(domain)
     const c1Jobs = Object.values(jobs).filter((x) => x && String(x.session_id) === 'c1')
     check(c1Jobs.length === 0, 'compaction/start does NOT auto-enqueue a stage-1 job (active-session, not persisted)')
@@ -65,8 +78,11 @@ try {
   console.log('[2] memory_precompact → 新队列：stage1_jobs 入队，不写废弃 sessions 水位')
   {
     const body = 'precompact key points'
+    // ⚠️ 语义变更（队长裁定 2026-10-01 · 评估 §五）：`memory_precompact` 的**提炼作业走正常 6h 静置资格**，
+    //   只有 `force=true`（用户明确要求）才即时入队。本段要验的仍是"入队走新队列、不写废弃水位"，
+    //   故显式带上 force；"默认不入队"的新契约由紧随其后的 [2b] 段与 t252-F 断言。
     const r = await ctx.tools.memory_precompact.execute(
-      { content: body },
+      { content: body, force: true },
       { agent: { session: { id: 'p1', header: { cwd: 'C:/p1' } } } },
     )
     check(!!r.file && r.file.includes('p1'), `precompact wrote a draft (file=${r.file})`)
@@ -81,9 +97,23 @@ try {
     check(!fs.existsSync(stage1StateFile()), '.stage1-state.json is NOT written by memory_precompact')
   }
 
+  console.log('[2b] memory_precompact 默认（模型自行调用）⇒ 草稿落、**不入队**，只留复查请求')
+  {
+    const r2 = await ctx.tools.memory_precompact.execute(
+      { content: 'default call key points' },
+      { agent: { session: { id: 'p2', header: { cwd: 'C:/p2' } } } },
+    )
+    check(!!r2.file && r2.file.includes('p2'), `默认调用仍**立即落草稿**（file=${r2.file}）`)
+    check(Object.keys(jobListOf(domain)).filter((k) => k.startsWith('p2::')).length === 0,
+      `默认调用**不入队**（改前树此处为 1 ⇒ 必红）`)
+    const m2 = metaOf(domain)
+    check(!!m2.idleRecheck && String(m2.idleRecheck.source || '').includes('precompact-not-qualified'),
+      `只留一条复查请求（source=${m2.idleRecheck && m2.idleRecheck.source}）`)
+  }
+
   console.log('[3] turn/end → 不写废弃会话水位')
   {
-    await eventHandlers['session/event']({ id: 't1', header: { cwd: 'C:/t1' } }, { type: 'turn/end' })
+    await dispatchSessionEvent({ id: 't1', header: { cwd: 'C:/t1' } }, { type: 'turn/end' })
     const meta = metaOf(domain)
     check(!meta.sessions, 'turn/end does not create retired stage1_meta.sessions')
     check(!fs.existsSync(pipelineStateFile()), '.pipeline-state.json is NOT written by turn/end')

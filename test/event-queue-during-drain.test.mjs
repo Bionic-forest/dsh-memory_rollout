@@ -33,7 +33,7 @@ const llmMock = { stream: () => streaming(EXTRACTION) }
 
 const longMsg = (id) => 'this is a reasonably long message for session ' + id + ' that is long enough to trigger the model extraction step'
 const msgEvent = (id) => ({ type: 'user/message', seq: 0, time: 0, surfaceOp: 'append', data: { id, role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: longMsg(id) }] } })
-const readSession = async (id) => ({ session: { version: 0, id, cwd: 'C:/' + id, createdAt: 0 }, events: [msgEvent(id)] })
+const readSession = async (id) => ({ session: { version: 4, isSeeded: false, id, cwd: 'C:/' + id, createdAt: 0 }, events: [msgEvent(id)] })
 
 const { ctx, domain } = makeCtx({
   get: (k) => (k === 'llm' ? llmMock : k === 'agentDefaultModel' ? { currentSelection: () => ({ provider: 'p', model: 'm' }) } : k === 'sessionQuery' ? { readSession } : undefined),
@@ -71,6 +71,28 @@ try {
   console.log('apply() OK')
 
   // 1) Fire A; wait until A is actually in-flight (blocked at the LLM gate).
+  // 【C4 夹具适配】disposed 先取该会话的持久快照、再按唯一资格判定（静置 ≥6h）决定入队。
+  //   夹具的会话 id 由 `session(id)` 现造 ⇒ 用包装器**登记 id**，快照按 id 懒造（形状与真宿主一致）。
+  //   **断言一字未改**：A/B 仍是被"正常纳入"，不是被绕门。
+  const c4SeenIds = []
+  const c4Snapshot = (id) => ({
+    header: { version: 4, isSeeded: false, id, cwd: 'C:/' + id, createdAt: 0 },
+    revision: '1:2:3:' + Math.round((Date.now() - 12 * 3600000) * 1e6) + ':4',
+    sizeBytes: 128,
+  })
+  const c4Persistence = {
+    list: async () => c4SeenIds.map(c4Snapshot),
+    locate: () => ({ path: 'Z:\\c4-not-exist\\log.jsonl' }),
+  }
+  const c4Disposed = eventHandlers['session/disposed']
+  eventHandlers['session/disposed'] = async (sess) => {
+    const id = sess && sess.id ? String(sess.id) : ''
+    if (id && !c4SeenIds.includes(id)) c4SeenIds.push(id)
+    return c4Disposed(sess)
+  }
+  const c4InnerGet = ctx.get.bind(ctx)
+  ctx.get = (k, dflt) => (k === 'sessionPersistence' ? c4Persistence : c4InnerGet(k, dflt))
+
   eventHandlers['session/disposed'](session('a'))
   const startedA = await waitUntil(() => waiters.length >= 1, 2000)
   check(startedA, 'run A got in-flight (holding at the LLM gate)')

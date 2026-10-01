@@ -33,6 +33,28 @@ const clone = (o) => {
   return out
 }
 
+/**
+ * **F2 夹具支持（2026-10-01）**：把某会话的"内容计时起点"直接播种进
+ * `stage1_meta.meta.contentSeen` —— 等价于"这份内容在 `firstSeenAtIso` 时刻就被观察到"。
+ * 语义变更说明：F2 起静置基准是**内容观测时刻**，不再是物理文件时间 ⇒ 夹具不能再靠"改 revision/mtime"
+ * 制造静置，必须播种计时起点（`sizeBytes` 要与快照一致，才会走 'unchanged' 分支）。
+ */
+export async function seedContentClock(domain, sessionId, firstSeenAtIso, sizeBytes = 0, watermark = 'wm-fixture', revision = 'rev-fixture') {
+  const t = domain.table('stage1_meta')
+  const cur = (t.get('meta') && typeof t.get('meta') === 'object') ? t.get('meta') : {}
+  const map = cur.contentSeen && typeof cur.contentSeen === 'object' ? { ...cur.contentSeen } : {}
+  map[String(sessionId)] = {
+    sizeBytes: Number(sizeBytes) || 0,
+    // R1（2026-10-01）：`revision` 也是**线索**（宿主 stat 派生）——夹具要表达"**有可靠基线**"
+    //   必须同时给出非空 `watermark` 与**当前快照的 `revision`**（否则线索一变就按"基线未知 ⇒ 不重置不成立"处理）。
+    revision: String(revision || ''),
+    watermark: String(watermark || ''),
+    firstSeenAt: String(firstSeenAtIso),
+    firstSeenSource: 'fixture-seeded',
+  }
+  await t.put('meta', { ...cur, contentSeen: map })
+}
+
 export function createFakeDomain() {
   const byName = new Map()
   function table(name) {

@@ -104,11 +104,21 @@ console.log('\n[C] pipeline extract output redacts secrets (D1 transcript + D3 w
       type: 'user/message', seq: 0, time: 0, surfaceOp: 'append',
       data: { id: 'trig', role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'the api key is sk-abcDEF123456 and the db Password=P@ssw0rd for our prod deployment on this project' }] },
     }
-    const readSession = async (id) => ({ session: { version: 0, id, cwd: 'C:/' + id, createdAt: 0 }, events: [msgEvent] })
+    const readSession = async (id) => ({ session: { version: 4, isSeeded: false, id, cwd: 'C:/' + id, createdAt: 0 }, events: [msgEvent] })
+    // 【C4 夹具适配】disposed 只带 session id，故快照按 id 现造（形状与真宿主一致；静置 12h ⇒ 正常获资格）。
+    const persistenceMock = {
+      list: async () => [{
+        header: { version: 4, isSeeded: false, id: 'trig', cwd: 'C:/trig', createdAt: 0 },
+        revision: '1:2:3:' + Math.round((Date.now() - 12 * 3600000) * 1e6) + ':4',
+        sizeBytes: 128,
+      }],
+      locate: () => ({ path: 'Z:\\c4-not-exist\\log.jsonl' }),
+    }
     // Inject a fake LLM that (a) records the transcript it received and (b) returns
     // a summary that itself echoes a secret — so we can verify both D1 and D3.
     ctx.get = (k) => {
       if (k === 'sessionQuery') return { readSession }
+      if (k === 'sessionPersistence') return persistenceMock
       if (k === 'agentDefaultModel') return { currentSelection: () => ({ provider: 'mock', model: 'mock-1' }) }
       if (k === 'llm') {
         return {

@@ -25,7 +25,7 @@ function makeHarness(hasSessionQuery) {
   const webServer = { register: (r) => { routes[r.path] = r; return () => {} } }
   const get = (k) => {
     if (k === 'webServer') return webServer
-    if (k === 'sessionQuery') return hasSessionQuery ? { readSession: async (id) => ({ session: { version: 0, id, cwd: 'C:/' + id, createdAt: 0 }, events: [] }) } : undefined
+    if (k === 'sessionQuery') return hasSessionQuery ? { readSession: async (id) => ({ session: { version: 4, isSeeded: false, id, cwd: 'C:/' + id, createdAt: 0 }, events: [] }) } : undefined
     if (k === 'agentDefaultModel') return { currentSelection: () => ({ provider: 'p', model: 'm' }) }
     return undefined
   }

@@ -35,7 +35,7 @@ const NOW = Date.now()
 const ID_GONE = '99999999-0000-4000-8000-000000000009'
 const ID_JOB = 'aaaaaaaa-0000-4000-8000-00000000000a'
 const snap = (id) => ({
-  header: { version: 0, id, cwd: 'C:/t240', createdAt: 0 },
+  header: { version: 4, isSeeded: false, id, cwd: 'C:/t240', createdAt: 0 },
   revision: `1:2:3:${Math.round((NOW - 12 * 3600000) * 1e6)}:4`,
   sizeBytes: 128,
 })

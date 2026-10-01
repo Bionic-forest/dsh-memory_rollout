@@ -23,6 +23,19 @@
 //      同时核实「零即时损失」「窗口仍成立」「旧计数不参与资格」
 //   T3 行为级（真实 recall 路径）：旧字段能救回条目、能参与次级排序；交付后不重写旧字段
 // 靶目录一律 os.tmpdir()；测试后清理。
+//
+// ── 更正登记（2026-09-30，F-rollout维护；队长独立验收退回项）────────────────────────────
+// **只改串、不改结论**：本批"时间炸弹"修复里新写的注释与三条打印文案，其**手算数字与代码不符**，
+// 已被队长独立复算揪出（我原先是从整毫秒绝对时刻推的，误差被放大到"看错成窗口内"）。更正如下，
+// 并给出可直接复算的口径（`shifted(X) = X + (now − USED − (29d + 18.8h))`）：
+//   距 now = (29d + 18.8h) + (USED − X)
+//   · A：`updatedAt` = now − **31d3h59m12.454s**（原写 31d3h53m15.446s）；`USED−UPDATED` = 1d9h11m12.454s
+//   · B：`updatedAt` = now − **30d10h2m27.550s**（原写 30d22h12m53.872s）；`USED−UPDATED` = 15h14m27.550s
+//   · `last_used_at` = now − **29d18h48m**（此条原本正确，未动）
+// **断言与结论零改动**：以上四个数字只出现在注释与 `check()` 的**说明文案**里，`check()` 的条件表达式
+// 与本文件任何期望值都未变。更正后已实测复核（`test\_probe-t198-margins.mjs`，用真 `entryEligible`）：
+//   A/B 的 `updatedAt` 距 now 均 **> 30d**（A 超出 3h59m12.454s、B 超出 10h2m27.550s）⇒ "已出窗口"成立；
+//   `entryEligible(A|B, now) === true`，而**抹掉 `last_used_at` 后 === false** ⇒ 分歧仍是真分歧（牙齿在）。
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -52,14 +65,41 @@ const ago = (days) => new Date(Date.now() - days * DAY).toISOString()
 const approx = (v, iso, tolMs = 2000) => Number.isFinite(v) && Math.abs(v - at(iso)) <= tolMs
 
 // ── 真实遗痕（字段级原样；content 为中性占位，理由见文首声明）──────────────────────────
+// ⚠️ **时间戳的处置（2026-09-30 修时间炸弹，只改"哪一天"，不改任何间隔关系）**：
+//   本文件原先**写死真实绝对时刻**（见下方 `PROD_*`）。而"具不具召回资格"是**相对现在**的 30 天硬窗
+//   （`entryEligible`，`lib/index.js` L1355 常量 / L1418-1433 实现）⇒ 到了 2026-09-27 之后，写死的
+//   `last_used_at` 自己走出窗口，**整份夹具随时间必红**（不是实现回归；已由冻结时钟实验定性）。
+//   修法 = 保留真实记录的全部**结构**（createdAt→updatedAt 的间隔、updatedAt→last_used_at 的
+//   17h54m44.554s / 17h54m44.560s 间隔、字段组合、id、tags），把整组时间戳**整体平移**到
+//   "相对于**本次运行的现在**" 的同一形状上：`last_used_at` = 现在 − 29d18.8h（补窗口内）。
+//   平移后的 `updatedAt` 距 now 是多少，由**平移式直接推出**（别再手算绝对时刻，会差几分钟）：
+//     `shifted(X) = X + (now − USED − (29d + 18.8h))` ⇒ **距 now = (29d + 18.8h) + (USED − X)**
+//     · A：`USED − UPDATED` = 2026-08-28T17:12:29.684Z − 2026-08-27T08:01:17.230Z = **1d9h11m12.454s**
+//       ⇒ `updatedAt` 距 now = 29d18h48m + 1d9h11m12.454s = **31d3h59m12.454s**（已出 30 天窗口 ✓）
+//     · B：`USED − UPDATED` = 2026-08-28T17:12:29.678Z − 2026-08-28T01:58:02.128Z = **15h14m27.550s**
+//       ⇒ `updatedAt` 距 now = 29d18h48m + 15h14m27.550s = **30d10h2m27.550s**（已出 30 天窗口 ✓）
+//   因此 `T_DIVERGE` = 运行时刻的 now，T2 的手算分歧在任何一天都成立，且**永不再腐**。
+//   真实生产原值（只作溯源，不再参与断言）：
+//     REAL_A：createdAt/updatedAt 2026-08-27T08:01:17.230Z，last_used_at 2026-08-28T17:12:29.684Z
+//     REAL_B：createdAt/updatedAt 2026-08-28T01:58:02.128Z，last_used_at 2026-08-28T17:12:29.678Z
+const PROD_A_UPDATED = '2026-08-27T08:01:17.230Z'
+const PROD_A_USED = '2026-08-28T17:12:29.684Z'
+const PROD_B_UPDATED = '2026-08-28T01:58:02.128Z'
+const PROD_B_USED = '2026-08-28T17:12:29.678Z'
+/** 这四组时间戳整体平移到"相对于本次运行的现在"的同一形状上。 */
+const SHIFT_A = Date.now() - new Date(PROD_A_USED).getTime() - (29 * DAY + 18.8 * 3600 * 1000)
+const SHIFT_B = Date.now() - new Date(PROD_B_USED).getTime() - (29 * DAY + 18.8 * 3600 * 1000)
+/** 整体平移一个绝对时刻（毫秒）⇒ ISO 串。 */
+const shifted = (iso, shiftMs) => new Date(new Date(iso).getTime() + shiftMs).toISOString()
+
 const REAL_A = {
   id: 'm-mtb8hgha-2ht8o0',
   content: 'eratw legacyprobe (content 占位：真实正文含用户私有工作规则，不入公开仓库)',
   tags: ['eratw', '协作模式', '推送', '工作流'],
-  createdAt: '2026-08-27T08:01:17.23Z',
-  updatedAt: '2026-08-27T08:01:17.23Z',
+  createdAt: shifted(PROD_A_UPDATED, SHIFT_A),
+  updatedAt: shifted(PROD_A_UPDATED, SHIFT_A),
   source: 'tool',
-  last_used_at: '2026-08-28T17:12:29.684Z',
+  last_used_at: shifted(PROD_A_USED, SHIFT_A),
   usage_count: 1,
   status: 'active',
 }
@@ -67,19 +107,20 @@ const REAL_B = {
   id: 'm-mtcay5xs-aerxa7',
   content: 'eratw legacyprobe (content 占位：真实正文含用户长期偏好，不入公开仓库)',
   tags: ['eratw', '拉取规则', '用户偏好', 'git', '教训'],
-  createdAt: '2026-08-28T01:58:02.128Z',
-  updatedAt: '2026-08-28T01:58:02.128Z',
+  createdAt: shifted(PROD_B_UPDATED, SHIFT_B),
+  updatedAt: shifted(PROD_B_UPDATED, SHIFT_B),
   source: 'tool',
-  last_used_at: '2026-08-28T17:12:29.678Z',
+  last_used_at: shifted(PROD_B_USED, SHIFT_B),
   usage_count: 1,
   status: 'active',
 }
 // 手算分歧时刻：此刻 A/B 的 updatedAt 已过 30 天窗口、last_used_at 仍在窗口内。
-//   A：updatedAt 2026-08-27T08:01:17Z → +30d = 2026-09-26T08:01:17Z（T 时刻已过 31d4h）
-//      last_used_at 2026-08-28T17:12:29Z → +30d = 2026-09-27T17:12:29Z（T 时刻仅过 29d18.8h ✓）
-//   B：updatedAt 2026-08-28T01:58:02Z → +30d = 2026-09-27T01:58:02Z（已过 30d10h）
-//      last_used_at 2026-08-28T17:12:29Z → 同上（29d18.8h ✓）
-const T_DIVERGE = at('2026-09-27T12:00:00Z')
+//   平移后逐条（与当初写夹具时的那份手算**同形**，只是它们现在跟着"现在"走）：
+//   A：updatedAt = now-31d3h59m12.454s → 30 天窗口的界在 now-30d ⇒ **已过**（超出 3h59m12.454s）
+//      last_used_at = now-29d18h48m → +30d = now+4h12m（**未过** ✓）
+//   B：updatedAt = now-30d10h2m27.550s → **已过**（超出 10h2m27.550s）
+//      last_used_at = now-29d18h48m → 同上（**未过** ✓）
+const T_DIVERGE = Date.now()
 
 try {
   // ── T0：导出与常量 ──────────────────────────────────────────────────────
@@ -119,13 +160,13 @@ try {
   {
     const f = entryEligible
     check(!!f && f(REAL_A, T_DIVERGE) === true,
-      '手算：A 在 T 时刻**仍具资格**（last_used_at 仅过 29d18.8h < 30d；改前只看 updatedAt=31d4h ⇒ 误淘汰 ⇒ 必红）')
+      '手算：A 在 T 时刻**仍具资格**（last_used_at 仅过 29d18h48m < 30d；改前只看 updatedAt=31d3h59m12.454s ⇒ 误淘汰 ⇒ 必红）')
     check(!!f && f(REAL_B, T_DIVERGE) === true,
-      '手算：B 在 T 时刻**仍具资格**（last_used_at 29d18.8h；改前 updatedAt=30d10h ⇒ 误淘汰 ⇒ 必红）')
+      '手算：B 在 T 时刻**仍具资格**（last_used_at 29d18h48m；改前 updatedAt=30d10h2m27.550s ⇒ 误淘汰 ⇒ 必红）')
     check(!!f && f({ ...REAL_A, last_used_at: '' }, T_DIVERGE) === false && f({ ...REAL_B, last_used_at: '' }, T_DIVERGE) === false,
       '（**假阳性**：改前也过）复刻改前行为：抹掉旧字段后这两条在 T 时刻**确实会失格** ⇒ 证明上面的分歧是真分歧')
     check(!!f && f(REAL_A, Date.now()) === true && f(REAL_B, Date.now()) === true,
-      '（**假阳性**）**零即时损失**（与 t196 实测 DELTA_LOST=0 一致）：此刻两条两字段都在窗口内 ⇒ 改前后均保留')
+      '（**假阳性**）**零即时损失**（与 t196 实测 DELTA_LOST=0 一致）：在取样的 now 点两条的 last_used_at 都在窗口内（29d18h48m；updatedAt 另为 31d3h59m12.454s / 30d10h2m27.550s，已出窗）⇒ 改前后均保留')
     check(!!f && f({ status: 'active', updatedAt: ago(45), last_used_at: ago(40) }, Date.now()) === false,
       '（**假阳性**）**没有放宽窗口**：旧字段也超 30 天 ⇒ 照样失格（兼容读不是"一律保留"）')
     check(!!f && f({ status: 'active', updatedAt: ago(45), usage_count: 99 }, Date.now()) === false,

@@ -18,7 +18,7 @@ let consolidationCalls = 0
 const EXTRACTION = { rollout_summary: 'sum', raw_memory: 'raw', slug: 'note', keywords: '', title: '' }
 const CONSOLIDATION = { memory_summary: 'v1\n## rescued', registry: '# MEMORY.md\nrescued' }
 const msgEvent = (id, text) => ({ type: 'user/message', seq: 0, time: 0, surfaceOp: 'append', data: { id, role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text }] } })
-const readSession = async (id) => ({ session: { version: 0, id, cwd: 'C:/' + id, createdAt: 0 }, events: [msgEvent(id, 'this is a long enough message for the model extraction step now')] })
+const readSession = async (id) => ({ session: { version: 4, isSeeded: false, id, cwd: 'C:/' + id, createdAt: 0 }, events: [msgEvent(id, 'this is a long enough message for the model extraction step now')] })
 const llmMock = { stream: (opts) => {
   const isExtract = opts && String(opts.system).includes('memory-extraction')
   if (!isExtract) consolidationCalls++

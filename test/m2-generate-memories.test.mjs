@@ -29,7 +29,7 @@ const ev = (type, seq, data, surfaceOp) => ({
   ...(surfaceOp ? { surfaceOp } : {}),
   data,
 })
-const header = (id, cwd) => ({ version: 0, id, cwd, createdAt: 0 })
+const header = (id, cwd) => ({ version: 4, isSeeded: false, id, cwd, createdAt: 0 })
 const readSessionOf = (eventsFor) => async (id) => ({
   session: header(id, 'C:/' + id),
   events: typeof eventsFor === 'function' ? eventsFor(id) : (eventsFor || []),
@@ -39,15 +39,15 @@ const readSessionOf = (eventsFor) => async (id) => ({
 const localEvents = () => ([
   ev('user/message', 0, { role: 'user', id: 'm1', content: [{ type: 'text', text: '用户明确决定：以后所有生成的目标文件都以 report_ 前缀命名，并且优先使用本地 PowerShell 处理，不需要额外确认。这是一个应当被记住的真实操作偏好。' }], source: { kind: 'user' } }, 'append'),
   ev('tool/call', 1, { turn: 0, step: 0, callId: 'c1', name: 'pwsh', arguments: '{}' }),
-  ev('tool/result', 2, { turn: 0, step: 0, message: { role: 'user', id: 'tr1', content: [{ type: 'tool-result', toolCallId: 'c1', content: [{ type: 'text', text: 'done' }] }], source: { kind: 'tool', callId: 'c1' } } }, 'append'),
-  ev('assistant/message', 3, { turn: 0, step: 0, message: { role: 'assistant', id: 'a1', content: [{ type: 'text', text: '好的，我已按你的决定把目标文件命名为 report_ 前缀，并继续使用本地 PowerShell。' }], source: { kind: 'model', provider: 'test', model: 'test-model' } } }, 'append'),
+  ev('tool/result', 2, { turn: 0, step: 0, message: { role: 'tool', id: 'tr1', toolCallId: 'c1', content: [{ type: 'tool-result', toolCallId: 'c1', content: [{ type: 'text', text: 'done' }] }], source: { kind: 'tool', callId: 'c1' } } }, 'append'),
+  ev('assistant/message', 3, { turn: 0, step: 0, stream: [], message: { role: 'assistant', id: 'a1', content: [{ type: 'text', text: '好的，我已按你的决定把目标文件命名为 report_ 前缀，并继续使用本地 PowerShell。' }], source: { kind: 'model', provider: 'test', model: 'test-model' } } }, 'append'),
 ])
 // 构造一个「外部 web_search 工具」的合法会话。
 const externalEvents = () => ([
   ev('user/message', 0, { role: 'user', id: 'm1', content: [{ type: 'text', text: '请查一下今天的新闻，用 web_search 帮我看。' }], source: { kind: 'user' } }, 'append'),
   ev('tool/call', 1, { turn: 0, step: 0, callId: 'c1', name: 'web_search', arguments: '{"queries":["today"]}' }),
-  ev('tool/result', 2, { turn: 0, step: 0, message: { role: 'user', id: 'tr1', content: [{ type: 'tool-result', toolCallId: 'c1', content: [{ type: 'text', text: 'Sources:\n- https://example.com/news' }] }], source: { kind: 'tool', callId: 'c1' } } }, 'append'),
-  ev('assistant/message', 3, { turn: 0, step: 0, message: { role: 'assistant', id: 'a1', content: [{ type: 'text', text: '以下是新闻摘要。' }], source: { kind: 'model', provider: 'test', model: 'test-model' } } }, 'append'),
+  ev('tool/result', 2, { turn: 0, step: 0, message: { role: 'tool', id: 'tr1', toolCallId: 'c1', content: [{ type: 'tool-result', toolCallId: 'c1', content: [{ type: 'text', text: 'Sources:\n- https://example.com/news' }] }], source: { kind: 'tool', callId: 'c1' } } }, 'append'),
+  ev('assistant/message', 3, { turn: 0, step: 0, stream: [], message: { role: 'assistant', id: 'a1', content: [{ type: 'text', text: '以下是新闻摘要。' }], source: { kind: 'model', provider: 'test', model: 'test-model' } } }, 'append'),
 ])
 
 // llm spy：记录调用，返回 collectStreamText 可消费的 async iterable（不是 Promise）。
@@ -175,7 +175,13 @@ const cleanup = (tmp) => { try { fs.rmSync(tmp, { recursive: true, force: true }
   })
   try {
     await apply(ctx, { generateMemories: true, precompactAuto: true })
-    await eventHandlers['session/event']({ id: 'comp1', header: { cwd: 'C:/' }, deriveMessages: () => [] }, { type: 'compaction/start' })
+    // C4（本批授权改写）：契约 §C4 ④ 把**空监听** `session/event` 删了 ⇒ 原"直接调用该监听器"改为
+    //   **可证伪的缺席**：①该监听器**未注册**（改前树此处为 function ⇒ 必红）；
+    //   ②即便按旧口径派发 `compaction/start`，也**不产生任何 stage-1 作业**（行为断言原样保留）。
+    //   原有"显式 `memory_precompact` 工具仍注册"的断言**原样保留**（C3 保留面，不许一起删）。
+    const onEvent = eventHandlers['session/event']
+    check(onEvent === undefined, `session/event **未注册**（实测 ${typeof onEvent}；改前树此处为 function）`)
+    if (typeof onEvent === 'function') await onEvent({ id: 'comp1', header: { cwd: 'C:/' }, deriveMessages: () => [] }, { type: 'compaction/start' })
     await new Promise((r) => setTimeout(r, 150))
     check(jobBySession(domain, 'comp1').length === 0, 'compaction/start 不自动入队 stage1_jobs')
     check(ctx.tools['memory_precompact'] && typeof ctx.tools['memory_precompact'].execute === 'function', '显式 memory_precompact 工具仍注册')

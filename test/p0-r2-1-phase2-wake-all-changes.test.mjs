@@ -72,7 +72,7 @@ const { ctx, domain } = makeCtx({
     k === 'llm' ? llmMock
       : k === 'agentDefaultModel' ? { currentSelection: () => ({ provider: 'p', model: 'm' }) }
         : k === 'webServer' ? webServer
-          : k === 'sessionQuery' ? { readSession: async (id) => ({ session: { version: 0, id, cwd: 'C:/' + id, createdAt: 0 }, events: [] }) }
+          : k === 'sessionQuery' ? { readSession: async (id) => ({ session: { version: 4, isSeeded: false, id, cwd: 'C:/' + id, createdAt: 0 }, events: [] }) }
             : undefined,
   tools: { register: (t) => { tools[t.name] = t } },
 })

@@ -102,7 +102,7 @@ async function runScenario(name, opts = {}) {
       k === 'llm' ? llmMock
         : k === 'agentDefaultModel' ? { currentSelection: () => ({ provider: 'p', model: 'm' }) }
           : k === 'webServer' ? webServer
-            : k === 'sessionQuery' ? { readSession: opts.readSession || (async (id) => ({ session: { version: 0, id, cwd: 'C:/' + id, createdAt: 0 }, events: [] })) }
+            : k === 'sessionQuery' ? { readSession: opts.readSession || (async (id) => ({ session: { version: 4, isSeeded: false, id, cwd: 'C:/' + id, createdAt: 0 }, events: [] })) }
               : undefined,
     tools: { register: (t) => { tools[t.name] = t } },
     systemPrompt: { section: () => {} },
@@ -149,9 +149,9 @@ const mkEvents = (userId, text, toolCalls = []) => {
   let seq = 1
   for (const tc of toolCalls) {
     evs.push({ type: 'tool/call', seq: seq++, time: seq, data: { turn: 0, step: 0, callId: 'c-' + seq, name: tc, arguments: '{}' } })
-    evs.push({ type: 'tool/result', seq: seq++, time: seq, surfaceOp: 'append', data: { turn: 0, step: 0, message: { id: 'tr-' + seq, role: 'user', source: { kind: 'tool', callId: 'c-' + seq }, content: [{ type: 'tool-result', toolCallId: 'c-' + seq, content: [{ type: 'text', text: 'done' }] }] } } })
+    evs.push({ type: 'tool/result', seq: seq++, time: seq, surfaceOp: 'append', data: { turn: 0, step: 0, message: { id: 'tr-' + seq, role: 'tool', toolCallId: 'c-' + seq, source: { kind: 'tool', callId: 'c-' + seq }, content: [{ type: 'tool-result', toolCallId: 'c-' + seq, content: [{ type: 'text', text: 'done' }] }] } } })
   }
-  evs.push({ type: 'assistant/message', seq: seq++, time: seq, surfaceOp: 'append', data: { turn: 0, step: 0, message: { id: 'a-' + userId, role: 'assistant', source: { kind: 'model', provider: 'p', model: 'm' }, content: [{ type: 'text', text: 'ack' }] } } })
+  evs.push({ type: 'assistant/message', seq: seq++, time: seq, surfaceOp: 'append', data: { turn: 0, step: 0, stream: [], message: { id: 'a-' + userId, role: 'assistant', source: { kind: 'model', provider: 'p', model: 'm' }, content: [{ type: 'text', text: 'ack' }] } } })
   return evs
 }
 
@@ -283,9 +283,9 @@ console.log('\n[4] 三种 no-output 原因分型（真实前端）')
 {
   // 按 session_id 分派完整事件序列：empty → 无消息；short → <60 字符；modelempty → >=60 字符但 LLM 摘要为空。
   const readSession = async (id) => {
-    if (id === 'src-empty') return { session: { version: 0, id, cwd: 'C:/' + id, createdAt: 0 }, events: [] }
-    if (id === 'src-short') return { session: { version: 0, id, cwd: 'C:/' + id, createdAt: 0 }, events: mkEvents(id, 'short note') }
-    return { session: { version: 0, id, cwd: 'C:/' + id, createdAt: 0 }, events: mkEvents(id, 'This is a long enough transcript that reaches the model extraction threshold for a durable fact that should be remembered.') }
+    if (id === 'src-empty') return { session: { version: 4, isSeeded: false, id, cwd: 'C:/' + id, createdAt: 0 }, events: [] }
+    if (id === 'src-short') return { session: { version: 4, isSeeded: false, id, cwd: 'C:/' + id, createdAt: 0 }, events: mkEvents(id, 'short note') }
+    return { session: { version: 4, isSeeded: false, id, cwd: 'C:/' + id, createdAt: 0 }, events: mkEvents(id, 'This is a long enough transcript that reaches the model extraction threshold for a durable fact that should be remembered.') }
   }
   // model_empty：extraction 返回解析成功但 rollout_summary 为空。
   const extractShape = { rollout_summary: '', raw_memory: '', slug: 'x', keywords: '', title: '' }
@@ -316,7 +316,7 @@ console.log('\n[4] 三种 no-output 原因分型（真实前端）')
 console.log('\n[5] 同 session 双 watermark：两个 source_ref 都在真实证据文件上可验证（真实前端）')
 {
   let payload = { rollout_summary: 'first watermark summary alpha', raw_memory: 'raw-a', slug: 'a', keywords: 'a', title: 'A' }
-  const readSession = async (id) => ({ session: { version: 0, id, cwd: 'C:/' + id, createdAt: 0 }, events: mkEvents(id, 'this is a long enough message for session ' + id + ' that reaches the model extraction of a durable fact') })
+  const readSession = async (id) => ({ session: { version: 4, isSeeded: false, id, cwd: 'C:/' + id, createdAt: 0 }, events: mkEvents(id, 'this is a long enough message for session ' + id + ' that reaches the model extraction of a durable fact') })
   const llmMock = { stream: () => ({ async *[Symbol.asyncIterator]() { yield { type: 'text-delta', text: JSON.stringify(payload) }; yield { type: 'finish', reason: { kind: 'stop' } } } }) }
   const s = await runScenario('appendonly', { readSession, llmMock })
   try {
@@ -351,7 +351,7 @@ console.log('\n[6] 召回引用：同关键词不同事实 → 不误用 stage1 
   // 会话 src-pnpm 用长文本（会触发 extraction 产出带 keywords=pnpm 的 output + 证据文件）。
   // 证据文件某行含「pnpm build failed because lockfile was stale」（Evidence 块）。
   // entry 内容为「user prefers pnpm over npm」—— 只与证据共享关键词 pnpm，但事实关系不同。
-  const readSession = async (id) => ({ session: { version: 0, id, cwd: 'C:/' + id, createdAt: 0 }, events: mkEvents(id, 'the pnpm build failed because the lockfile was stale during the continuous integration pipeline run.') })
+  const readSession = async (id) => ({ session: { version: 4, isSeeded: false, id, cwd: 'C:/' + id, createdAt: 0 }, events: mkEvents(id, 'the pnpm build failed because the lockfile was stale during the continuous integration pipeline run.') })
   const extractShape = { rollout_summary: 'v1\n## 证据\n- pnpm build failed because lockfile was stale', raw_memory: 'pnpm-build-failure', slug: 'pnpm', keywords: 'pnpm,build', title: 'pnpm-build' }
   const s = await runScenario('recall-mismatch', { readSession, extractShape, llmResponse: { memory_summary: 'v1\n## consolidated', registry: '# MEMORY.md' } })
   try {

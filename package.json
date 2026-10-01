@@ -1,6 +1,6 @@
 {
   "name": "dsh-memory_rollout",
-  "version": "0.1.27",
+  "version": "0.1.28",
   "description": "Codex-style per-session memory for DeepSeek Harness: qualified sessions auto-distill into per-session drafts (rollout_summaries); manual add/change/forget runs only on explicit user request; layered disclosure (summary + registry); idempotent integration watermark. / 一会话一草稿记忆插件：合格会话自动提炼草稿；手动增/改/忘仅在显式请求时执行；分层披露（总纲+注册表）；幂等整合水印。",
   "keywords": [
     "deepseek-harness",
@@ -53,10 +53,16 @@
     }
   },
   "peerDependencies": {
-    "@deepseek-ai/dsh-storage-domain": "^0.1.1-rc.2",
-    "@deepseek-ai/dsh-storage": "^0.1.1-rc.2",
-    "@deepseek-ai/dsh-tools": "^0.1.1-rc.2",
-    "@deepseek-ai/dsh-system-prompt": "^0.1.1-rc.2",
+    "@deepseek-ai/dsh-storage-domain": "^0.2.0-rc.2",
+    "@deepseek-ai/dsh-storage": "^0.2.0-rc.2",
+    "@deepseek-ai/dsh-tools": "^0.2.0-rc.2",
+    "@deepseek-ai/dsh-system-prompt": "^0.2.0-rc.2",
+    "@deepseek-ai/dsh-session": "^0.2.0-rc.2",
+    "@deepseek-ai/dsh-session-query": "^0.2.0-rc.2",
+    "@deepseek-ai/dsh-session-persistence": "^0.2.0-rc.2",
+    "@deepseek-ai/dsh-llm": "^0.2.0-rc.2",
+    "@deepseek-ai/dsh-agent-default-model": "^0.2.0-rc.2",
+    "@deepseek-ai/dsh-host-webserver": "^0.2.0-rc.2",
     "@deepseek-ai/cordis": "^4.0.1",
     "react": "^18.2.0"
   },

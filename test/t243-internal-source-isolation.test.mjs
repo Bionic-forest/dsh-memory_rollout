@@ -48,7 +48,7 @@ const hostShapedRestrict = (names, sink) => (f) => {
 }
 const HOUR = 3600000
 const snap = (id, idleHours, header = {}) => ({
-  header: { version: 0, id, cwd: 'C:/t243', createdAt: 0, ...header },
+  header: { version: 4, isSeeded: false, id, cwd: 'C:/t243', createdAt: 0, ...header },
   revision: `1:2:3:${Math.round((Date.now() - idleHours * HOUR) * 1e6)}:4`,
   sizeBytes: 128,
 })
@@ -143,7 +143,7 @@ await section('[t243-3] 静置扫描不再消费内部执行者会话（新式�
     }
     const { ctx, domain } = makeCtx({
       get: (k) => (k === 'sessionPersistence' ? persistence
-        : k === 'sessionQuery' ? { readSession: async (id) => { reads += 1; readIds.push(String(id)); return { session: { version: 0, id, cwd: 'C:/t243', createdAt: 0 }, events: [msgEvent(id, 'x'.repeat(200))] } } }
+        : k === 'sessionQuery' ? { readSession: async (id) => { reads += 1; readIds.push(String(id)); return { session: { version: 4, isSeeded: false, id, cwd: 'C:/t243', createdAt: 0 }, events: [msgEvent(id, 'x'.repeat(200))] } } }
           : k === 'llm' ? { stream: () => ({ async *[Symbol.asyncIterator]() { yield { type: 'finish', reason: { kind: 'stop' } } } }) } : undefined),
     })
     await apply(ctx, cfg)
@@ -185,7 +185,7 @@ await section('[t243-4] 三个触发面共用同一判定：显式入口也不�
   const home = path.join(TMP, 'h-explicit'); fs.mkdirSync(home, { recursive: true }); process.env.DSH_HOME = home
   const tools = {}
   const { ctx, domain } = makeCtx({
-    get: (k) => (k === 'sessionQuery' ? { readSession: async (id) => ({ session: { version: 0, id, cwd: 'C:/t243', delegationDepth: 1 }, events: [msgEvent(id, 'y'.repeat(200))] }) } : undefined),
+    get: (k) => (k === 'sessionQuery' ? { readSession: async (id) => ({ session: { version: 4, isSeeded: false, id, cwd: 'C:/t243', delegationDepth: 1 }, events: [msgEvent(id, 'y'.repeat(200))] }) } : undefined),
     tools: { register: (t) => { if (t && t.name) tools[t.name] = t } },
   })
   await apply(ctx, {})
@@ -203,7 +203,7 @@ await section('[t243-5] 队列中已有的内部作业被资格检查收掉（�
   let reads = 0
   const readIds = []
   const { ctx, domain } = makeCtx({
-    get: (k) => (k === 'sessionQuery' ? { readSession: async (id) => { reads += 1; readIds.push(String(id)); return { session: { version: 0, id, cwd: 'C:/t243', createdAt: 0 }, events: [msgEvent(id, 'z'.repeat(300))] } } }
+    get: (k) => (k === 'sessionQuery' ? { readSession: async (id) => { reads += 1; readIds.push(String(id)); return { session: { version: 4, isSeeded: false, id, cwd: 'C:/t243', createdAt: 0 }, events: [msgEvent(id, 'z'.repeat(300))] } } }
       : k === 'llm' ? { stream: () => { throw new Error('内部作业**不该**走到模型调用'); } } : undefined),
   })
   await apply(ctx, {})

@@ -5,6 +5,9 @@
 *.bak-*
 *.map
 ~$*
+*.pre-*
+test/_*.mjs
+_recycle-meta.bin
 
 # Editor
 .DS_Store

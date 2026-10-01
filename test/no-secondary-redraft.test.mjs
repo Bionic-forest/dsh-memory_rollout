@@ -14,10 +14,25 @@ const { apply } = await import(PLUGIN)
 
 const eventHandlers = {}
 const queryMock = {
-  readSession: async (id) => ({ session: { version: 0, id, cwd: 'C:/' + id, createdAt: 0 }, events: [] }),
+  readSession: async (id) => ({ session: { version: 4, isSeeded: false, id, cwd: 'C:/' + id, createdAt: 0 }, events: [] }),
 }
+// 【C4 夹具适配】官方 `sessionPersistence` 供货面 + 时间信号（"静置"由 revision 第 4 段表达）。
+//   C4 起 `session/disposed` 先取该会话的持久快照、再用**唯一**资格判定（静置 ≥ minRolloutIdleHours，默认 6h）
+//   决定是否入队。这里给的就是**真宿主会提供的形状**（`{header, revision, sizeBytes}`）：
+//   revision = `dev:ino:size:mtimeNs:ctimeNs`（官方 fileRevision 形状）⇒ 12h 前的 mtimeNs 即"已静置 12h"。
+//   ⇒ 本夹具**不绕过任何资格门**：会话是被新语义**正常纳入**的。
+const IDLE_HOURS = 12
+const snapshotOf = (id, headerExtra = {}) => ({
+  header: { version: 4, isSeeded: false, id, cwd: 'C:/' + id, createdAt: 0, ...headerExtra },
+  revision: '1:2:3:' + Math.round((Date.now() - IDLE_HOURS * 3600000) * 1e6) + ':4',
+  sizeBytes: 128,
+})
+const persistenceMock = { list: async () => [snapshotOf('trigger')], locate: () => ({ path: 'Z:\\c4-not-exist\\log.jsonl' }) }
+
 const { ctx, domain } = makeCtx({
-  get: (k) => (k === 'sessionQuery' ? queryMock : undefined),
+  get: (k) => (k === 'sessionQuery' ? queryMock
+    : k === 'sessionPersistence' ? persistenceMock
+      : undefined),
   on: (ev, cb) => { eventHandlers[ev] = cb; return () => {} },
 })
 

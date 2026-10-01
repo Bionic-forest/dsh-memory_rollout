@@ -284,52 +284,58 @@ await section('[t242-3] 按宿主正规配方装配（preset + 模型 + mount �
   }
 })
 
-// ── ⑤ 空壳执行者会话清理 ──────────────────────────────────────────────────────
-await section('[t242-5] 空壳会话清理：只清自己的、空的、已停的', async () => {
-  console.log('\n[T242-5] `cleanupEmptyExecutorSession` 的四道谓词 + 结果如实')
+// ── ⑤ 空壳执行者会话：只识别、不删除（本批 C2「只停不删」牙齿翻转）─────────────
+// 翻转依据：用户裁定「归档＝宿主标准配置、**删除＝可选项**」+ Codex R5「移除删除编排时应保留真正的
+//   取消/释放路径」⇒ 插件侧不再驱动任何会话删除。**原断言是"空壳被清（attempted=true / 调用一次）"**，
+//   现改为"识别到空壳但 `delete_sessions` 调用计数恒为 0、结果如实报未删"。安全不变式原样保留：
+//   只认自己的会话 id、有模型输出绝不碰、配置关闭不记。
+await section('[t242-5] 空壳会话：识别到但不删除（本批牙齿翻转）', async () => {
+  console.log('\n[T242-5] `cleanupEmptyExecutorSession` 的四道谓词 + **不驱动删除** + 结果如实')
   const mkCtxWithDelete = (calls, result) => ({ tools: { get: (n) => (n === 'delete_sessions' ? { execute: async (a) => { calls.push(a); return result } } : undefined) } })
-  // (a) 正例：我们的 id + 0 事件 + 工具在 ⇒ 调用一次，outcome=deleted
+  // (a) 正例（**牙齿翻转**）：我们的 id + 0 事件 ⇒ 识别为空壳，但**绝不调用删除工具**
   {
     const calls = []
     const ctx = mkCtxWithDelete(calls, { dryRun: false, targets: 1, deleted: 1, skippedLive: 0, skippedBackup: 0, backupDir: 'B:/x', details: [{ sessionId: 'p2-exec-b-1-0-t', action: 'deleted', backupPath: 'B:/x/p2-exec-b-1-0-t' }] })
     const r = await cleanupEmpty({ ctx, config: {}, batchId: 'b-1', sessionId: 'p2-exec-b-1-0-t', assistantEvents: 0 })
-    check(r.attempted === true && r.deleted === true && r.outcome === 'deleted', `空壳被清（attempted=${r.attempted} outcome=${r.outcome}）`)
-    check(calls.length === 1 && calls[0].sessionIds[0] === 'p2-exec-b-1-0-t' && calls[0].dry_run === false, `入参只点名自己的会话（${JSON.stringify(calls[0])}）`)
+    check(r.emptyShell === true && r.deleted === false && r.outcome === 'no-delete-by-design',
+      `空壳被**识别**（emptyShell=${r.emptyShell} outcome=${r.outcome}）`)
+    check(r.attempted === false, `不发起删除尝试（attempted=${r.attempted}）`)
+    check(calls.length === 0, `删除工具**调用 0 次**（实测 ${calls.length}；本批前此处为 1 —— 插件侧不再驱动删除）`)
   }
-  // (b) 有内容（事件>0）⇒ 绝不删（那是本轮证据）
+  // (b) 有内容（事件>0）⇒ 绝不碰（那是本轮证据）—— 安全不变式，原样保留
   {
     const calls = []
     const r = await cleanupEmpty({ ctx: mkCtxWithDelete(calls, {}), config: {}, batchId: 'b-1', sessionId: 'p2-exec-b-1-0-t', assistantEvents: 7 })
-    check(r.attempted === false && String(r.text).includes('has-assistant-output') && calls.length === 0, `有模型输出 ⇒ 不碰（那是本轮证据；${r.text}）`)
+    check(r.attempted === false && r.emptyShell === false && String(r.text).includes('has-assistant-output') && calls.length === 0, `有模型输出 ⇒ 不碰（那是本轮证据；${r.text}）`)
   }
-  // (c) 不是我们的会话 id ⇒ 绝不删
+  // (c) 不是我们的会话 id ⇒ 绝不碰（只认自己的）—— 安全不变式，原样保留
   {
     const calls = []
     const r = await cleanupEmpty({ ctx: mkCtxWithDelete(calls, {}), config: {}, batchId: 'b-1', sessionId: 'session-user-real', assistantEvents: 0 })
-    check(r.attempted === false && r.text === 'not-our-executor-session' && calls.length === 0, '别人的会话 id ⇒ 不碰（只清自己的）')
+    check(r.attempted === false && r.emptyShell === false && r.text === 'not-our-executor-session' && calls.length === 0, '别人的会话 id ⇒ 不碰（只认自己的）')
   }
-  // (d) 配置关闭 ⇒ 不删（只停）
+  // (d) 配置键 `executorEmptySessionCleanup:false`（旧配置）⇒ 连识别记录都不落（读取兼容，不是"停止"开关）
   {
     const calls = []
     const r = await cleanupEmpty({ ctx: mkCtxWithDelete(calls, {}), config: { executorEmptySessionCleanup: false }, batchId: 'b-1', sessionId: 'p2-exec-b-1-0-t', assistantEvents: 0 })
-    check(r.attempted === false && r.text === 'disabled-by-config' && calls.length === 0, '配置关闭 ⇒ 只停不删')
+    check(r.attempted === false && r.emptyShell === false && r.text === 'disabled-by-config' && calls.length === 0, '旧配置键 false ⇒ 不记识别（且**不驱动删除**）')
   }
-  // (e) 会话目录已被外部清掉 ⇒ 工具报 skipped-missing ⇒ 如实落 outcome，不抛
-  {
-    const calls = []
-    const ctx = mkCtxWithDelete(calls, { dryRun: false, targets: 1, deleted: 0, skippedLive: 0, skippedBackup: 0, backupDir: 'B:/x', details: [{ sessionId: 'p2-exec-b-1-0-t', action: 'skipped-missing' }] })
-    const r = await cleanupEmpty({ ctx, config: {}, batchId: 'b-1', sessionId: 'p2-exec-b-1-0-t', assistantEvents: 0 })
-    check(r.attempted === true && r.deleted === false && r.outcome === 'skipped-missing', `目录已消失 ⇒ 如实报 skipped-missing（${r.outcome}）`)
-  }
-  // (f) 工具不可用 ⇒ 不抛、不算成功
+  // (e) **口径翻转**：旧断言"缺删除工具 ⇒ delete-tool-unavailable"作废 —— 现在**根本不去取删除工具**，
+  //     因此"工具不可用"不再是一个可达结果；同一入参应报"空壳已识别、不删除"。
   {
     const r = await cleanupEmpty({ ctx: { tools: { get: () => null } }, config: {}, batchId: 'b-1', sessionId: 'p2-exec-b-1-0-t', assistantEvents: 0 })
-    check(r.attempted === false && r.text === 'delete-tool-unavailable', `删除工具不可用 ⇒ 明确原因（${r.text}）`)
+    check(r.emptyShell === true && r.outcome === 'no-delete-by-design' && r.deleted === false,
+      `删除工具不存在也照样只识别（outcome=${r.outcome}；旧断言的 delete-tool-unavailable 已不可达）`)
+  }
+  // (f) 入参缺失 ⇒ 如实跳过，不抛
+  {
+    const r = await cleanupEmpty({ config: {}, batchId: 'b-1', sessionId: '', assistantEvents: 0 })
+    check(r.attempted === false && r.text === 'missing-id-or-batch', `缺 id ⇒ 如实跳过（${r.text}）`)
   }
 })
 
 // ── ⑥ 会话目录消失的容错 ──────────────────────────────────────────────────────
-await section('[t242-6] 会话已消失：读/停/清都不抛不挂，且不改批状态', async () => {
+await section('[t242-6] 会话已消失：读/停/识别都不抛不挂，且不改批状态（本批不删）', async () => {
   console.log('\n[T242-6] 悬空引用的容错（用户 GUI 清掉执行者会话目录）')
   // (a) stop 对"会话没了"的 executor 不抛、不挂
   {
@@ -411,10 +417,10 @@ await section('[t242-6] 会话已消失：读/停/清都不抛不挂，且不改
       `批记录带真实活动串（${goneSession.job.executor_activity}）`)
     check(goneSession.job.executor_model === 'test-m', `批记录带装配证据（model=${goneSession.job.executor_model}）`)
     check(String(goneSession.job.executor_reason).includes('executor-no-activity'), `失败理由如实（${goneSession.job.executor_reason}）`)
-    check(goneSession.deleteCalls.length === 1 && goneSession.deleteCalls[0].sessionIds[0].startsWith('p2-exec-B-0-'),
-      `对"空壳 + 我们自己的 id"调了一次清理（${JSON.stringify(goneSession.deleteCalls[0] && goneSession.deleteCalls[0].sessionIds)}）`)
-    check(String(goneSession.job.executor_cleanup || '').includes('skipped-missing'),
-      `清理结果如实落记录（executor_cleanup=${goneSession.job.executor_cleanup}）`)
+    check(goneSession.deleteCalls.length === 0,
+      `**不驱动删除**：本批不会对"空壳 + 我们自己的 id"发起任何删除调用（实测 ${goneSession.deleteCalls.length} 次；翻转前此处为 1）`)
+    check(String(goneSession.job.executor_cleanup || '').includes('no-delete-by-design'),
+      `识别结果如实落记录（executor_cleanup=${goneSession.job.executor_cleanup}）`)
     check(String(withSession.job.executor_session_missing_at || '') === '' && String(goneSession.job.executor_session_missing_at || '') !== '',
       `只有"会话真的没了"那一路落缺失标记（alive='${withSession.job.executor_session_missing_at || ''}' / gone='${goneSession.job.executor_session_missing_at || ''}'）`)
   }

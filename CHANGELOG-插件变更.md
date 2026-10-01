@@ -1,6 +1,129 @@
 # CHANGELOG — dsh-memory_rollout 插件变更
 
+## 2026-10-01 · 客户端定点修正：统一说明交互与记忆条目边界
+
+- 用户直接授权 Codex 修改前端；只改 `lib/client.js`，不改服务端管线、配置含义或记忆数据。
+- 所有字段进阶说明共用原生 details/summary：点击或键盘展开/收起；官方数字/文本行关闭内置 help，普通字段不再使用 hover-only title。
+- 自有 CSS 随 MemoryPage 挂载，移除未声明的 styles 服务访问及静默失败路径。卡片增加明确边框、背景、16px 内边距和独立操作区。
+- 记忆展开保留换行；支持键盘展开；修正预览空白正则误写 `/s+/g` 导致字母 s 被替换的问题。
+- 验证：Node 语法通过；隔离 Edge 下普通回退/模拟官方字段两路径的说明点击、悬停、键盘检查通过；卡片样式实际生效；展开全文及 360px 无横向溢出通过。不是生产 GUI 已验收。
+- 还原口及隔离验证：`D:\软件\Deepseek\rollout-ui-20261001\client.original.js`、`CHANGELOG.original.md`、`verify-ui.cjs`、`preview.png`。原前端 SHA256 `E064C610A47367BEE7765FF767DBE19DFFE04C21BBADE4C046186721B978174D`。
+- 未提交、未发布、未重启宿主；实际页面加载需用户刷新/重新打开后确认。
+
 遵循《向 Codex 原版系统看齐》工程总纲 §19 工作纪律：每次变更记录对应需求、行为变化、测试与成熟度等级变化。成熟度等级（L0–L4）见总纲 §3。
+
+## 2026-10-01 · v0.1.28：撤「记忆并删除」编排 + 统一自动资格 + 超龄分批回补（C1–C8）
+
+**来源**：C1–C8 改造契约（评审 R3 + AD-4）+ 用户裁定 **§10.1**（`session/disposed` **不得绕过静置门槛**）/ **§10.2**（超龄会话**不得永久无说明地跳过**）；批次验收见《独立验收记录 3》（C1/C2/C3）、《独立验收记录 4》（C4/C6）与《本体-部署前收尾与步骤单-2026-09-30》§二（C7/C8）。
+**基线**：仓库 HEAD `fe2f610`（v0.1.27）。本批分**三段**落地：**C1–C8**（仓库改后 = `lib/index.js` `BF74E413B5C673DC…` / `lib/client.js` `DC850D00E83A4FF0…`）→ 2026-09-30 部署并重启验收；**D1/D2 口径收窄 + 前端提示行收敛**（2026-10-01，真机取证之后）→ `lib/index.js` `C89A0ACEB5A82BD4…`（531,818 B）并已部署；**返修批 F1/F2/F3 + 顺手收口**（2026-10-01，外部评估 §三/§六）→ 仓库现态 **`lib/index.js` `0CF4FD33CA1078CD08B4F1073ECEC28C6246C71F32E378658DA9912AA1A33740`（551,538 B；含末尾补做的 `memory_precompact` 收窄）**、`lib/client.js` `1E7DB7B86191B5DDDFA471B2969AB10B680C39BF9932127E2E97170743D6984F`（16,353 B）。三处 `package.json` 均为 `1688CC5D80182F66…`（version `0.1.28`）；部署面 `lib/` 现为 `C89A0ACE…`（= 返修批还原口字节）⇒ **本批（F1/F2/F3）尚未部署**。
+
+### 一、C1：撤「记忆并删除」编排（插件不再提供"提炼并删除源会话"这条编排）
+
+- **归零面**（`lib/index.js` 与 `lib/client.js` 内**全 0 命中**）：`delete_sessions` / `ingest-and-delete` / `judgeDeleteToolResult` / `stagesOf` / `evidenceReasonText` —— 对应的**工具路由**、**工具注册行**、**证据理由文案**与**客户端设置页区块**一并移除。
+- **客户端**：`lib/client.js` **−51 行 / 2 hunks**（`@@ -56,19` 状态钩子区、`@@ -355,32` UI 渲染区），均为同一"删前按钮"特性的两块 ⇒ 设置页不再出现该区块。
+- **保留面（不得误伤，见 §三）**：显式入口 `memory_ingest_session` 与草稿证据读取 `draftEvidenceOf` 原样保留。
+
+### 二、C2：AD-4「只停不删」（识别留、删除调用整段移除）
+
+- `cleanupEmptyExecutorSession` 的**识别**逻辑保留（四道谓词原样），**删除工具的调用整段移除** ⇒ 空壳执行者会话**只被识别/停止，不再被删除**。
+- 「只停」通道保留：`stopConsolidationExecutor` **9** 处、`stopExecutorIfAlive` **3** 处（定义 + 调用 + 文档），未被本批连带删除。
+
+### 三、C3：保留面零误伤（逐项自数复核）
+
+`draftEvidenceOf` **3**（含 B 入口 `memory_ingest_session` 内的调用）、`stopConsolidationExecutor` **9**、`stopExecutorIfAlive` **3**、`cleanupEmptyExecutorSession` **2**、`executorEmptySessionCleanup`（旧配置键读取兼容）**5**、`memory_ingest_session` **4**、`.phase2-authoritative` **6**。
+旧配置可加载：`Config({})` → 默认值；`Config({executorEmptySessionCleanup:false})` 可加载；三条负面对照（`'nope'` / `maxUnusedDays:-1` / `maxUnusedDays:"x"`）**必抛**。
+
+### 四、C4：统一自动资格（唯一判定 + 事件面只请求复查）
+
+- 新增**唯一**的自动摄取资格判定 `qualifiesForAutoIngest`（`lib/index.js` L3243）：把原先只写在 `ingestIdleScan` 里的两段时间门（静置 ≥ `minRolloutIdleHours`、年龄 ≤ `maxRolloutAgeDays`）提成**一个函数**，供**所有自动入口**共用；取不到时间信号 ⇒ `no-time-signal` **保守不放行**。
+- **自动入口前置**：静置扫描与 `session/disposed` 都先过这道门。旧实现里 `ingestSessionById` 与 `session/disposed` **不含任何时间检查**（事件入口在入口层绕过静置窗口）⇒ 已消除，且判定仍然只有一份（不在事件侧另判，避免两套）。
+- `session/disposed` **只请求复查**：未达标 ⇒ `requestIdleRecheck`（把"谁请求过复查 + 何时"落 `stage1_meta.meta.idleRecheck` + 用既有 `scheduleStage1Wake` 提前唤醒，**不新建计时器平台、不入队、不判资格**）；达标才走**同一个**统一摄入口。
+- 原先并列的**空监听** `session/event`（只为"不空注册"而存在、内部无任何操作）**删除** ⇒ 事件面只留一个监听者。
+
+### 五、C6：10 天上限 → 分批回补（超龄不再永久跳过）
+
+- `tooOld` 拆成两个**可观测面**：**`tooOldDiscovered`**（超龄、进回补池 = **发现**）与 **`tooOldQueued`**（实际纳入入队）；新增 `backfill` 游标 `{lastScannedAt, cursor}` 落 `stage1_meta`，日志带 `backfillCursor`。
+- 取数次序：扫描主循环先取窗内；**仅当 `enqueued < 剩余预算` 才取回补池**；池内按 `mtimeMs` **升序 = 最老优先**（必须显式排序，"最老的排在清单末尾"会被无限推迟）；每趟 ≤ 剩余预算（复用 `maxSourcesPerStartup` 的 per-pass 语义）⇒ 大积压摊成多趟，**不饿死新内容**。
+- 回补路径复用**同一个**判定函数（`mode:'backfill'`），不是第二套判据。
+- **口径②落点 `nonRootDeferred`**：血缘门**保持不动**（本轮不放宽），但把"血缘门挡下的已发现会话"**显式计数**为 `nonRootDeferred`，与 `tooOldDeferred` / `notIdleDeferred` 并列于"已发现未提炼"（工具 schema + 日志 + 投影**三层齐**）⇒ 不再静默跳过。
+
+### 六、C7：peer 声明对齐 `0.2.0-rc.2`（+ C8 只落条款）
+
+- `peerDependencies`：4 条 `^0.1.1-rc.2` **抬到** `^0.2.0-rc.2`（`dsh-storage-domain` / `dsh-storage` / `dsh-tools` / `dsh-system-prompt`），并**补 6 条声明**（`dsh-session` / `dsh-session-query` / `dsh-session-persistence` / `dsh-llm` / `dsh-agent-default-model` / `dsh-host-webserver`）⇒ 共 **12** 条。本项 **U0 = +10 / −4、单 hunk、全在 `peerDependencies`**。
+- 宿主闸门 `evaluatePluginCompatibility`（asar 内 `dsh-app-boot/lib/index.js` L286-313）以 `semver.satisfies(runtime, range, {includePrerelease:true})` 比对，`runtime` = **`0.2.0-rc.2`** ⇒ `^0.2.0-rc.2` **满足**（裸 `^0.2.0` 反而 **FAIL**）。本批据此**删去** `compatibility.json` 里的 `dsh-memory_rollout@0.1.27` 豁免；**顺序不能反**：先落 peers、再删豁免，否则会被收进 `skippedBundles` 静默禁用。
+- **C8（chat-manager）只落条款**：本仓库内 `chat-manager` 引用 **0 处**；上游 registry `latest` 仍 `1.5.4`（**未修**），补丁属**另一条线**（与共享 store 同 inode、升级会被覆盖，重打脚本另存）⇒ 本批**不含代码改动**，只登记口径。
+
+### 七、本批途中修掉的两处真缺陷
+
+1. **`session/disposed` 的"血缘被抹"接线缺陷（防御性修复；生产影响未取得）**：快照头取自 `persistence.list()`，**可能不含血缘字段**；旧接线把它当权威头传下去 ⇒ `isRootSessionHeader` 会因"字段缺失"把**非根会话误判成根**（旧代码到读源处还会用持久头覆盖入参头 ⇒ live 头的 `parentSession`/`delegationDepth` 被抹掉）。修法 = 用**保留血缘的合并头** `lineageHeader = { ...snapHeader, ...liveHeader }`（只补快照里多出来的键，不伪造血缘；拿不到 live 头则退回快照头）。
+   **分层写**：该条件在夹具下可复现；但 **C4 已把"直接入队"整条撤掉**（未达标只请求复查）⇒ **原穿透路径已不存在**，这条合并头是**额外的防御性措施**（当前无可观测行为依赖它）；**生产是否真会被穿透 = 未取得**（反证线索：真机 `list()` 头带 `delegationDepth`）。
+2. **C6 回补自相矛盾**：回补的**入池条件恰恰是**"超龄"（`too-old`），而自动入口会用**同一个** `too-old` 把回补尝试原样挡回 ⇒ 池里的会话**永远入不了队**（本批实测 **`tooOldDiscovered=1` 而 `tooOldQueued=0`**）。修法 = `qualifiesForAutoIngest` 增加**唯一一处**合法的放宽模式 `mode:'backfill'`：**只放松年龄上界**，静置下限（6h）照旧强制（用户裁定 §10.2 只要求消除永久遗漏，从未放松静置门）。
+
+### 八、D1/D2 口径收窄（真机取证后，2026-10-01）
+
+**来源**：真机 wake 扫描读数 `tooOldDiscovered=2 / tooOldQueued=0 / backfill.cursor=""`（`scanLastAt` `2026-09-30T16:42:09Z` 与 `16:44:14Z` 两趟逐字段相同）+ 只读取证（生产 `scanSeen` 116 条分桶、两条候选的作业终态与草稿）；完整分析见《本体-C6回补真机异常分析-2026-10-01.md》。**结论：那趟是"设计使然"**（两条超龄会话早已提炼完成，被 `scanSeen` 完成水位挡下），**不是摄入缺陷**；暴露的是下面两处计数/口径问题。
+
+- **D1（修）**：`tooOldDiscovered` 原先在**完成水位判定之前**自增 ⇒"早已提炼完成、只是后来超龄"的会话**每趟**被计成"发现"（外观与 §10.2 要消除的"无说明地永久跳过"无法区分）。修法 = 在 `too-old` 分支内、自增**之前**补同一道完成水位判定（`prev && Number(prev.mtimeMs) >= mtimeMs ⇒ stats.done += 1; continue`）——**3 行新增、0 行删除**；**不**把水位判定整体提前（那会把"未静置但已处理"的会话从 `fresh` 挪到 `done`，改既有语义）。
+  - ⚠️ **语义变更 ⇒ 跨版本读数不可比**：修后 `tooOldDiscovered` 只统计"**超龄 且 确实没处理过**"。修前"已处理 + 超龄"会同时进 `tooOldDiscovered` 与 `done`；修后只进 `done`。⇒ 与 D1 之前的 `scanLastStats` 数字**不可直接比较**。
+  - 真机那 2 条本就属"已处理"（`succeeded_with_output` + 2,214 B 草稿 / `succeeded_no_output`）⇒ 修后该趟应为 `tooOldDiscovered=0` 且 `done` 仍含它们（**重启后复跑未取得**，见"未取得"）。
+- **D2（口径）**：给 `backfill.cursor` 加注释写明 —— **每趟重置**；语义 = 本趟**最后一个走到"尝试入队"那一步**的候选 id（写入点只有"资格不合格 / 迭代末"两处）；空值只表示"**本趟没走到尝试**"（池空 / 闸门关 / 候选全被完成水位挡下），**不是**跨趟进度游标。**不加新字段。**
+  - **与样本的偏离（登记）**：样本管线有 `mark_backfill_complete(last_watermark)`（调用点 `app-server/tests/suite/v2/thread_memory_mode_set.rs:109`、`app-server/tests/suite/v2/memory_reset.rs:144`、`memories/write/src/startup_tests.rs:1101`），**其实现体不在本快照 ⇒ 语义未取得**，故**不做猜测式对齐**（不造"语义表演"字段）；我们的"回补进度"由 `scanSeen`（每会话 `mtimeMs` 完成水位 + `queued` 标记）承担，`backfill.cursor` 只是**本趟诊断读数**。逐条对应与偏离见《本体-rollout-D1与前端提示修正-2026-10-01.md》的样本对应表。
+- **真机覆盖面（重要）**：C6 的**回补入队分支**（走到 `qualifiesForAutoIngest(mode:'backfill')` 并写 `cursor`）在真机上**至今 0 次被走到**（本机不存在"未处理 + 超龄"的根会话）⇒ 该路径仍属"**夹具层通过、真机层未取得**"。
+
+### 九、前端提示行收敛（2026-10-01 · 用户拍板）
+
+- **旧形**：每个带 `hint` 的字段下方各印一遍 `(悬浮 ? 查看解释)`（`renderConfigField` 内 ⇒ 设置页实际渲染 **11 遍**）。
+- **新形**：**只在「设置」分组标题旁提一次**，同样样式（`fontSize: 11px`、`opacity: 0.65`），且**当且仅当该分组内至少一个字段带 `hint`**（`cfgFields.some((f) => f.hint)`）时才显示。
+- **未动**：每字段原生悬浮解释 `title: f.hint`、`（≠ 默认）` 标记，以及其余文案/结构/样式/字段顺序一律不变；服务端 `CONFIG_FIELDS` 的 label 未动。
+
+### 十、返修批（外部评估 §三/§六 · 发布门槛）：F1 消费身份 / F2 内容计时 / F3 回补公平 + 顺手收口
+
+**来源**：外部独立评估《rollout 0.1.28 独立评估与定稿符合性-2026-10-01》（其行号对应 `lib/index.js` `C89A0ACE…`）的 F1/F2/F3 + §六"同批顺手收口"；用户裁定「继续修复」。**改前树 = 本批还原口 `lib\index.js.pre-f1f2f3-2026-10-01`（= `C89A0ACE…` 逐字节）**。
+
+- **F1（P1）消费链处理错版本 —— 修**：入队按当时内容算水位；消费时读到的是**最新**正文，旧作业若照旧提炼就"拿新内容冒充旧版本"（评估已独立复现：`readNewContent=true / sameWatermark=true / status=succeeded_with_output`）。修法：**领取→读源之后、模型调用之前**，用**实际读到的正文**重算水位：
+  · ≠ 作业水位且是**自动作业** ⇒ 本作业**作废、不提炼**（终态 `succeeded_no_output` + `last_skip_reason='superseded-by-newer-content'`），交回新一轮资格/调度（新内容按**内容计时**重新等 6h；下次扫描按 `<sid>::<新水位>` 重新入队）；
+  · **显式/强制作业**（`memory_ingest_session` / `memory_precompact`）保持即时，但**产出/证据/seen-index 一律引用"实际消费的那一版"**（`submitStage1Job(..., { consumedWatermark })`）。
+  · **边界（有意）**：该对比只对"入队处亲手按正文算的水位"生效（作业字段 `source_watermark_kind='content-body'`，由 `ingestSessionById` 标注）；来源未知的作业不参与对比 —— 否则会把"水位含义未知"误判成"内容已变"、把合法作业作废。
+  · **附带收窄（评估 §五「模型自行调用 ≠ 用户授权」· 队长裁定 2026-10-01）**：`memory_precompact` 的**草稿仍立即落**（保全内容、不调模型 —— 语义不变），但它排的**提炼作业走正常 6h 内容静置资格** —— `explicit` **不再自动为真**，**仅 `force=true`**（用户明确要求）才即时；不够静置 ⇒ **不入队**，只落一条 `idleRecheck('precompact-not-qualified:…')`。工具描述与 `force` 参数说明同步改写（原文"不传 / false = 行为与原来完全一致"已作废）。
+- **F2（P1）计时不再依赖物理文件 mtime —— 修**：宿主**不提供内容身份**（asar 内 `dsh-session-persistence-jsonl` 的 `fileRevision(identity)` = `[dev, ino, size, mtimeNs, ctimeNs].join(':')`，**stat 派生**；`sizeBytes` = 物理文件长度；`list()` 快照无 `updatedAt`、无 content hash）。改用**自建最小内容变更记录** `stage1_meta.meta.contentSeen[sid] = { sizeBytes, watermark, firstSeenAt, firstSeenSource }`：
+  · `sizeBytes` 未变 ⇒ **不读正文**、沿用 `firstSeenAt`（复制/改文件元信息 ⇒ **不重置**计时）；
+  · `sizeBytes` 变了 ⇒ 只读**那一条**会话的正文算水位：与记录同 ⇒ 重写/压实（不重置）；不同 ⇒ 新内容 ⇒ `firstSeenAt = 现在`（重置）；
+  · **首次观测**：用既有物理时间**一次性播种**并标 `firstSeenSource='seeded-from-file-mtime'`（**不声称是内容时间、不加精度**；物理时间也读不到才退回"现在"）—— 避免迁移时整库白等 6h；
+  · `qualifiesForAutoIngest` 增参 `contentAtMs`（内容计时优先；回退物理时间时返回体标 `timeBasis`），扫描 / disposed / 入队口三处**同基准**。
+  · ⚠️ **语义变更 ⇒ 与旧读数不可比**：静置 6h / 年龄 10 天从此是**内容**口径；`tooOldDiscovered` 也随之变（迁移后需约 10 天内容年龄才会重新出现）。
+- **F3（P2）回补公平 —— 修**：新增 `BACKFILL_FAIRNESS_K = 3`：连续 `K-1` 趟"池非空却一格没取到"（`backfill.waitPasses` / `poolSeen` **跨趟持久**）⇒ 本趟主循环上限压到 `remaining-1`，**强制留 1 格给回补**。**不扩大总预算、不加第二套任务平台**。⚠️ 预算 = 1 时无法拆分 ⇒ 规则退化为无（如实登记）。
+- **顺手收口（评估 §六）**：① `tooOldDeferred` / `notIdleDeferred` **结构性恒 0 ⇒ 删除**（stats + schema + render + 投影 + 日志）；② 新增 `noTimeSignal` **计数 + 日志**（根会话取不到时间信号，不再"一条统计都不计"）；③ `done` 文案改为 `done(完成水位挡下)`，并写明**与"整理完成"不同义**；④ 补**撤删除的运行时断言**（新用例读的是**发布的那份实现**：5 个归零面 0 命中 + 无 delete 类工具名）；⑤ 清掉 `memory_ingest_session` 模型可见描述里的"不推进任何删除动作"残留（D-09），并写明"记忆并删除"编排已撤除；⑥ **D-07**：`writeStage1Meta` 加**本条目串行链**（每个 patch 在链上**重读最新值**再合并；不占用不可重入的 `withWrite`），并加**可控交错测试**（扫描写者 × 复查写者 ⇒ 两者字段都不丢）。**残余（只报不改）**：仍有 5 处调用把**整个 meta 对象**当 patch 传（读→改→写之间若有其它写者落地即被旧值覆盖）—— 见交付报告 §三组-3。
+- **本批新增观测面**：`noTimeSignal`、`contentBodyReads`（为内容计时读过的正文条数 —— 只在 `sizeBytes` 变化时读，观察"不是每趟全量重算"）、`backfill.poolSeen` / `backfill.waitPasses` / `backfill.reserved`（公平规则的输入与落点）。
+- `lib/client.js` 本项 U0 = **+8 / −4**（`@@ -243,3 +242,0` 删每字段那 3 行；`@@ -299 +296,8` 分组标题 1 行 → 8 行）。提示串在源码里始终是 **1 处**，但**渲染次数 11 → 1**。
+
+### 十一、第二轮收口（外部复核 §三 R1–R4 · 2026-10-01）：统一内容身份与时钟 / 统一发现与公平 / 旧任务兼容
+
+**来源**：外部复核《rollout 返修批独立复核与最小收口指导-2026-10-01》（基准 `lib/index.js` = `0CF4FD33…`）R1/R2/R3/R4 + §五 证据降级 + §六 有限矩阵。**改前树 = 本批还原口 `lib\index.js.pre-r1r4-2026-10-01`（= `0CF4FD33…` 逐字节）**。**不新增表/字段/平台，不扩大总预算。** 仓库现态 `lib/index.js` = **`1D105BAB55110B529ECEC11AF61962A51832DDE8F3ED7ADAD23A298715E5A68E`**（556,705 B；本批 U0 = **+73 / −9、15 hunks**）。
+
+- **宿主写入契约（前置只读取证）**：asar 内 `dsh-session-persistence-jsonl` 的消息追加是 `open(path,'a')`（L3218），但**存在**崩溃尾部 `truncate`（L2894-2896 / L3246 / L3252-3255）、`open(tmp,'wx')` 临时件写（L3175）、`open(path,'w')`（L688）与**格式换代**（不可变 generation，L754-930）⇒ **不是"严格只追加"** ⇒ 长度/物理时间**不作内容身份**；compaction/归档是否整体重写 = **未取得**。
+- **R1+R2（原则① 统一内容身份与时钟）**：`contentSeen` 增记 `revision`，`sizeBytes`/`revision` 只作**线索** —— 线索**任一**变化（含"同长度改写"）⇒ **只读那一条**正文核对水位：同正文 ⇒ 沿用旧计时（不重置）；不同 ⇒ 重置；**基线未知 + 线索变 ⇒ 不借旧时钟放行**并建立基线；**读不到正文 ⇒ 本轮不放行且不落盘**。**首次读到正文时回填基线**（复用入队已算的水位，**不重复读**；disposed 路径同样回填），回填写进本趟 map、**防趟末覆盖**。
+- **R3（原则② 统一发现与公平）**：主循环**去掉"达上限即 break"**，改**入队前守卫** ⇒ 清单**走完**（**队尾**超龄来源能被发现），总预算不变；**预算 = 1 时公平趟主循环 0 格、唯一名额给回补**（跨趟轮换）。
+- **R4（旧任务兼容）**：缺 `source_watermark_kind` 的遗留记录按**历史语义归类**（水位形态 = 16 位十六进制内容水位 ⇒ 参与核对；否则语义未知 ⇒ 不参与、也不冒用）；覆盖旧 `pending` / `failed_retryable`，**终态不重跑**、不清库。
+- **矩阵与观测口径**：`t252` 新增 `[t252-G]` 五场景（含**队尾**与**预算 1**）；断言改用**假 `readSession` 调用计数 + 模型输入次数 + 产出水位**（**不再**用 `contentBodyReads` 代指全管线读正文）。夹具按新线索语义更新（`seedContentClock` 支持 `revision`/基线；`m3` 的"dispose 立即为新内容入队"改为**内容刚变只复查、静置够才入队**）。**全套 97/97**。
+- **证据降级（§五 五条）**：逐条落点见《本体-rollout-第二轮收口-R1R4-2026-10-01.md》§六。
+- **未取得**：compaction / 归档是否整体重写；**真实生命周期闭环待用户配合**（GUI 归档/取消归档；步骤见该报告 §五）。
+- **一键恢复默认配置（用户要求 2026-10-01）**：`/dsh-memory_rollout/config` 新增 `{action:"reset"}` —— **先备份** `dsh-memory_rollout.settings.json.pre-reset`（同族只留最新 1）⇒ **删 overlay**（删不掉如实回报 500）⇒ **内存里把 overlayable 键恢复为 schema 默认**（`Config({})` 派生）⇒ 返回新 config/fields。**诚实边界**：用户若在 `cordis.patch.yml` 里手工写过同名值，**重启后那些值会重新生效**（我们不碰宿主层文件）。同时：overlay 写入改为 `{version:1, savedAt, values}` 包裹层（**旧裸对象仍可加载**）、`applyConfigOverlay` 校验失败**不再静默**（带原因 `console.warn`）；设置页新增「恢复默认」并把它与导出/导入并为**同一操作行**（保存配置仍在设置区底部，因官方 `SettingsForm` footer 无条件渲染）。
+- **配置默认值（用户裁定 2026-10-01）**：`maxExtractTokens` 默认 **8000 → 200000**（`lib/index.js` L129；上限 `max(200000)`、min/step 不变、**不新增字段**）。同步：字段 hint（L222）、`cap` 与调用点的 `|| 8000` 兜底（L4385 / L4487 → `|| 200000`）、前端 `lib/client.js` 的 `FULL` 说明（⇒ 约 800,000 字符上限、**仍会截断**、**越大越贵**）。
+
+### 测试
+
+- **新增两个用例**：`test/t247-c6-backfill.test.mjs`（C6：发现/纳入分离 + 最老优先 + 剩余预算 + 游标 + 不饿死新内容）、`test/t248-c4-qualification.test.mjs`（C4：唯一判定 + 两模式 + disposed 只请求复查）。
+- 全套 **`ALL 96 TESTS PASSED`**（原 94 → 96）；本批授权的夹具断言改动落在 `t237-idle-ingest-scan` / `m2-generate-memories` / `precompact-new-queue` **三个已跟踪文件**，以及 **`t246-timebasis-archive-lists`（`t246-d`）** 上 —— 后者是**上一批新建、本批被契约点名翻转**的用例，因**尚未纳入版本控制**（未跟踪），"工作区 vs HEAD 的 `check|assert` 行集合"这种机械审计口径**覆盖不到它**（该口径只比已跟踪文件），故在此显式列出，**不是漏改**；除此以外**未授权改动 = 0**。
+- **返修批（F1/F2/F3 + 顺手收口 + D-07）**：新增 `test/t252-repair-f1f2f3.test.mjs`（**28 断言**：F1 反例与显式实消版本、F2 内容计时三项、F3 `K=3` 公平、恒零字段与"撤删除"运行时断言、D-07 交错写）；`t246-b` 由"现状偏差"**翻转为目标行为**断言、`t246-c` 的 `check(true, …)` 换成真断言、`t247` 的恒零字段断言随删除翻转、`t248-4` 夹具改为**播种内容计时起点**（新 helpers `seedContentClock`）。**全套 97/97（96 → 96 + t252）**。
+- **`memory_precompact` 收窄的牙齿**：`t252-F` 的「默认调用**不立即入队**」在修前树必红（实测作业数 **1** vs 期望 0）、「只留复查请求」亦红；`precompact-new-queue` 新增 `[2b]` 段在修前树 **2 红**；修后两处全绿（该文件原 `[2]` 段按裁示显式带 `force: true`，继续验"入队走新队列 / 不写废弃水位"）。**全套仍 97/97**。
+- **返修批牙齿（修前树 = `C89A0ACE…`）**：`t252` **18 红**（含 `A1`：`提炼调用=1 / status=succeeded_with_output` —— 正是评估的 F1 反例；`C3`：旧候选 0 条作业 —— F3 反例；`B3`：内容变了却不是 fresh）、`t246` **3 红**、`t247` **2 红**、`t248` 0 红（本批未涉 C4）；修后四者全绿。
+- **D1 牙齿（2026-10-01 新增）**：`t247` 扩出 `[t247d]` 两例 —— ①「已处理 + 超龄」⇒ `tooOldDiscovered=0`、`done≥1`、池空、`cursor=''`；②「未处理 + 超龄」⇒ `tooOldDiscovered=1`、`tooOldQueued=1`、`cursor=<id>`。**修前树（`lib/index.js` = `BF74E413…`）上 ① 必红**（实测 **27 ✓ / 1 ✗ / exit 1**），修后 **28 ✓ / 0 ✗ / exit 0**；② 两树皆绿（回归护栏，证明收窄没砍掉真正的回补入队路径）。
+- **全套（D1 + 前端收窄之后 · 另开临时 `DSH_HOME` · 干净复跑）**：**`ALL 96 TESTS PASSED`（96/96、0 FAIL）**。前端收敛**未改任何断言**（`t236-client-settings-page` 未断言提示行文案）。
+- `node --check lib/index.js` / `node --check lib/client.js` **exit 0**。
+- **牙齿对照（改前树必红）**：`t248` 7 红、`t237` 4 红、`m2-generate-memories` 1 红、`t246-d` 1 红、`t247`（新）16 红、`precompact-new-queue` 崩溃（无 ✓/✗ 输出）—— 本版树上全绿 ⇒ 新语义确实生效，不是"改数字让闸门变绿"。
+
+**未取得**：① **重启后**的真机复跑读数（D1 修后 `tooOldDiscovered` 是否由 2 → 0、`done` 是否仍含那 2 条）② **F2 迁移口径 + "真实内容时间未取得"**（首次观测按物理时间**一次性播种**并标 `seeded-from-file-mtime` ⇒ `contentSeen.firstSeenAt` 是"**我们观测到该内容状态的时刻**"，**不是**内容时间；`tooOldDiscovered` 要等约 10 天内容年龄才重新出现；真机读数未取 —— 这条口径经队长 2026-10-01 裁定**保持不变**）③ **F1/F2/F3 的真机复跑**（部署面仍为 `C89A0ACE…` = 本批还原口 ⇒ 本批未部署；夹具层已取得）④ **归档闭环①**：真机"已归档会话仍被 `list()` 返回"未取得（插件不读第三方归档账本，只见 `list()` 给的快照；生产 `~\.dsh\sessions\` 下也没有单独的归档区可读）⑤ **归档闭环⑤**（草稿已有 + 整合失败 ⇒ 只推进后续）端到端组合未单独取得（既有 phase2 失败路径测试覆盖其分片）⑥ **同长度改写**：F2 靠 `sizeBytes` 变化触发正文重读 ⇒ **同长度**的改写会被当成"未变"（失败方向保守：漏一次重置、不会误放行；如实登记）⑦ "回补把新内容饿死"的**量化**（K=3 的公平规则已给出有限等待界，实测量化未取）⑧ `session/disposed` 血缘缺陷的**生产**可达性（见 §七-1）⑨ 样本 `mark_backfill_complete` 的**语义细节**（实现体不在本快照）。
+**成熟度**：L3 → L3（既有自动通路的资格收窄 + 失效面撤除，未新增能力面；真机闭环仍缺上述实测，如实不宣称）。
 
 ## 2026-09-22 · v0.1.27：推送前独立审核三修（F1 吞错 / F2 一次请求硬约束 / F3 升级边界）
 

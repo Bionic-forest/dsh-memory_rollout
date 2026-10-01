@@ -31,7 +31,7 @@ const waitUntil = async (fn, ms) => {
 
 let payload = { rollout_summary: 'first watermark summary alpha', raw_memory: 'raw-a', slug: 'a', keywords: 'a', title: 'A' }
 const msgEvent = (id, text) => ({ type: 'user/message', seq: 0, time: 0, surfaceOp: 'append', data: { id, role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text }] } })
-const readSession = async (id) => ({ session: { version: 0, id, cwd: 'C:/' + id, createdAt: 0 }, events: [msgEvent(id, 'this is a long enough message for session ' + id + ' that triggers the model extraction of a durable fact')] })
+const readSession = async (id) => ({ session: { version: 4, isSeeded: false, id, cwd: 'C:/' + id, createdAt: 0 }, events: [msgEvent(id, 'this is a long enough message for session ' + id + ' that triggers the model extraction of a durable fact')] })
 const llmMock = { stream: () => ({ async *[Symbol.asyncIterator]() { yield { type: 'text-delta', text: JSON.stringify(payload) }; yield { type: 'finish', reason: { kind: 'stop' } } } }) }
 
 try {

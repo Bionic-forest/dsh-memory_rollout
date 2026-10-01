@@ -100,3 +100,12 @@ memory_precompact(content="要留的关键要点")          # → 压缩前防�
 ## 协议
 
 MIT（见 `LICENSE`）。
+
+## 设置文件 / Settings file
+
+- 位置：<DSH_HOME>/dsh-memory_rollout.settings.json（**不在** memories/ 里 ⇒ 导出/导入不会带上它）。
+- 格式：{ "version": 1, "savedAt": "<ISO>", "values": { …仅设置页可编辑的字段… } }。**旧版裸对象格式仍可正常加载**（向后兼容）。
+- 优先级：settings.json（设置页写的运行时 overlay）**优先于** cordis.patch.yml。因此**若你在 patch.yml 里手工写过同名值，重启后那些值会重新生效** —— 「恢复默认」只清 overlay，不改宿主层的 patch.yml。
+- 一键还原：「恢复默认」先把 overlay 备份为 dsh-memory_rollout.settings.json.pre-reset（同族只留最新 1），再删除 overlay，让代码 schema 的默认值重新生效（本会话即时生效、重启后同样生效）。删不掉时接口**如实返回失败**，不假装成功。
+
+The settings page writes this overlay, which takes precedence over cordis.patch.yml. "Restore defaults" backs it up to …settings.json.pre-reset and deletes it so the schema defaults apply again; it never touches your patch.yml.

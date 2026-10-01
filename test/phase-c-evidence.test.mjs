@@ -23,7 +23,7 @@ const msgEvent = (id, text) => ({
   data: { id, role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text }] },
 })
 const readSession = async (id) => ({
-  session: { version: 0, id, cwd: 'C:/' + id, createdAt: 0 },
+  session: { version: 4, isSeeded: false, id, cwd: 'C:/' + id, createdAt: 0 },
   events: [msgEvent(id, 'this is a long enough message for session ' + id + ' that triggers the model extraction of a durable fact')],
 })
 

@@ -36,7 +36,7 @@ const NOW = Date.now()
 const ID = '77777777-0000-4000-8000-000000000007'
 const ID_SHORT = '88888888-0000-4000-8000-000000000008'
 const snap = (id, idleHours) => ({
-  header: { version: 0, id, cwd: 'C:/t238', createdAt: 0 },
+  header: { version: 4, isSeeded: false, id, cwd: 'C:/t238', createdAt: 0 },
   revision: `1:2:3:${Math.round((NOW - idleHours * 3600000) * 1e6)}:4`,
   sizeBytes: 128,
 })
@@ -47,7 +47,7 @@ const msgEvent = (id, text) => ({
   data: { id, role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text }] },
 })
 const readSession = async (id) => ({
-  session: { version: 0, id, cwd: 'C:/t238', createdAt: 0 },
+  session: { version: 4, isSeeded: false, id, cwd: 'C:/t238', createdAt: 0 },
   events: [msgEvent(id, id === ID_SHORT ? SHORT : LONG)],
 })
 const llmMock = {

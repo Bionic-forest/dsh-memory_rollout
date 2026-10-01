@@ -57,15 +57,19 @@ const llmMock = {
   },
 }
 
-const newCtx = ({ handlers } = {}) => {
+const newCtx = ({ handlers, extraGet } = {}) => {
   const tools = {}
   const { ctx, domain } = makeCtx({
-    get: (k) =>
-      k === 'llm'
+    get: (k) => {
+      // 【C4 夹具适配】把额外服务面（如 sessionPersistence）透传给插件；不改变既有分支行为。
+      const extra = typeof extraGet === 'function' ? extraGet(k) : undefined
+      if (extra !== undefined) return extra
+      return k === 'llm'
         ? llmMock
         : k === 'agentDefaultModel'
           ? { currentSelection: () => ({ provider: 'p', model: 'm' }) }
-          : undefined,
+          : undefined
+    },
     tools: { register: (t) => { tools[t.name] = t } },
     ...(handlers ? { on: (ev, cb) => { handlers[ev] = cb; return () => {} } } : {}),
   })
@@ -188,14 +192,32 @@ try {
   console.log('[T6] session/disposed：根会话入队、非根会话不入队')
   {
     const handlers = {}
-    const { ctx, domain } = newCtx({ handlers })
+    const seenIds = []
+    const idleSnap = (id) => ({
+      header: { id, cwd: 'C:/' + id, createdAt: 0, isSeeded: false, version: 4 },
+      revision: '1:2:3:' + Math.round((Date.now() - 12 * 3600000) * 1e6) + ':4',
+      sizeBytes: 128,
+    })
+    const { ctx, domain } = newCtx({
+      handlers,
+      extraGet: (k) => (k === 'sessionPersistence'
+        ? { list: async () => seenIds.map(idleSnap), locate: () => ({ path: 'Z:\\c4-not-exist\\log.jsonl' }) }
+        : undefined),
+    })
     await apply(ctx, {})
     const live = (id, extra = {}) => ({
       id,
       deriveMessages: () => [{ role: 'user', content: [{ type: 'text', text: 't189 probe ' + 'x'.repeat(80) }] }],
       ...extra,
     })
-    const onDisposed = handlers['session/disposed']
+    // 【C4 夹具适配】T6 走真实 disposed：登记被处置的会话 id（`seenIds`/`idleSnap` 已在本块开头声明，
+    //   供上面的 `extraGet` 按 id 供货快照）；`sessionPersistence.list()` 给的就是真宿主的形状，
+    //   静置 12h ⇒ 由**新语义正常获资格**。**断言一字未改。**
+    const onDisposed = async (sess) => {
+      const id = sess && sess.id ? String(sess.id) : ''
+      if (id && !seenIds.includes(id)) seenIds.push(id)
+      return handlers['session/disposed'](sess)
+    }
     check(typeof onDisposed === 'function', '捕获到 session/disposed 处理器')
     if (typeof onDisposed === 'function') {
       await onDisposed(live('s-root-189'))

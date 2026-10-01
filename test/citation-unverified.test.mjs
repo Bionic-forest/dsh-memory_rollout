@@ -46,7 +46,11 @@ try {
   await apply(ctx, { recallLimit: 10 })
   // An entry whose text is NOT materialized in MEMORY.md and whose session has no
   // draft → the citation must mark it unverified, never MEMORY.md:1-1.
-  table.put('e1', { content: 'the gamma protocol is green', tags: ['x'], sessionId: 'no-such-session', createdAt: '2026-08-27T00:00:00.000Z', updatedAt: '2026-08-27T00:00:00.000Z', source: 'ui' })
+  // 时间戳用**相对时间**：条目召回资格是 30 天硬窗（`entryEligible`，lib/index.js L1355 常量 /
+  //   L1418-1433 实现），写死的绝对时刻会走出窗口让本文件随时间必红（2026-09-30 已实测到该"时间炸弹"）。
+  //   本用例只关心"查得到这条 + 引用标 unverified"，与具体日期无关 ⇒ 锚在"一天前"。
+  const dayAgo = new Date(Date.now() - 24 * 3600 * 1000).toISOString()
+  table.put('e1', { content: 'the gamma protocol is green', tags: ['x'], sessionId: 'no-such-session', createdAt: dayAgo, updatedAt: dayAgo, source: 'ui' })
   fs.mkdirSync(memoryRoot(), { recursive: true })
   fs.writeFileSync(path.join(memoryRoot(), 'MEMORY.md'), '# MEMORY.md\n(no gamma line here)\n', 'utf8')
 

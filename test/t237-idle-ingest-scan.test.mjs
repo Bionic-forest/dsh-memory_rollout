@@ -36,7 +36,7 @@ const section = async (label, fn) => {
 const NOW = Date.now()
 const HOUR = 3600000
 const snap = (id, idleHours, opts = {}) => ({
-  header: { version: 0, id, cwd: 'C:/t237', createdAt: 0, ...(opts.header || {}) },
+  header: { version: 4, isSeeded: false, id, cwd: 'C:/t237', createdAt: 0, ...(opts.header || {}) },
   revision: `1:2:3:${Math.round((NOW - idleHours * HOUR) * 1e6)}:4`,   // 第 4 段 = mtimeNs
   sizeBytes: 128,
 })
@@ -45,7 +45,7 @@ const msgEvent = (id, text) => ({
   data: { id, role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text }] },
 })
 const readSession = async (id) => ({
-  session: { version: 0, id, cwd: 'C:/t237', createdAt: 0 },
+  session: { version: 4, isSeeded: false, id, cwd: 'C:/t237', createdAt: 0 },
   events: [msgEvent(id, '会话 ' + id + ' 的正文：' + '细节'.repeat(40))],
 })
 const llmMock = {
@@ -91,14 +91,29 @@ await section('[t237] 静置扫描：根会话 + 窗口 + 有界 + 不重复', a
   check(!!scanTool, '注册了 memory__ingest_scan（A 的把手）')
   const r = await scanTool.execute({})
   check(r.ran === true, `扫描跑过（ran=${r.ran} reason=${r.reason}）`)
-  check(r.candidates === 1 && r.enqueued === 1, `只入队 1 个候选（candidates=${r.candidates} enqueued=${r.enqueued}）`)
-  check(r.fresh === 1 && r.tooOld === 1 && r.nonRoot === 1, `分类计数正确（fresh=${r.fresh} tooOld=${r.tooOld} nonRoot=${r.nonRoot}）`)
+  // ── C6 口径翻转（本批授权；原断言见交付报告 §退役/翻转清单）────────────────────────
+  // 原前提："超龄会话**一律不入队**（永久排除）"。C6 撤掉了这条：年龄上限**不再是永久资格排除**，
+  //   而是改成**分批回补**（发现 → 按剩余预算、最老优先纳入）。故本用例的期望值随之翻转为
+  //   「本趟 = 窗内 1 + 余量回补 1」，并带上 C6 的不变量（总数 ≤ 预算、纳入的确是那条超龄的）。
+  //   取数次序（用户 2026-09-30 裁定）：**窗内合格候选先取，剩余预算才给回补池；池内最老优先**。
+  //   "分批 + 池内最老优先"的专测在 `t247-c6-backfill.test.mjs`（本文件只钉"不丢 + 不超预算"）。
+  check(r.candidates === 1, `窗内合格候选 1 个（candidates=${r.candidates}）`)
+  check(r.enqueued === 2,
+    `本趟入队 = 窗内 1 + 余量回补 1（enqueued=${r.enqueued}；翻转前为 1）`)
+  check(r.enqueued <= 2, `本趟入队总数 ≤ perPassSourceBudget()（enqueued=${r.enqueued} ≤ 2）`)
+  check(r.fresh === 1 && r.nonRoot === 1 && r.nonRootDeferred === 1,
+    `分类计数正确（fresh=${r.fresh} nonRoot=${r.nonRoot} nonRootDeferred=${r.nonRootDeferred}）`)
+  check(r.tooOldDiscovered === 1 && r.tooOldQueued === 1,
+    `超龄**被发现并纳入**（tooOldDiscovered=${r.tooOldDiscovered} tooOldQueued=${r.tooOldQueued}）`)
 
   const jobs = jobListOf(domain)
   const rootKeys = Object.keys(jobs).filter((k) => k.startsWith(ID_ROOT))
   check(rootKeys.length === 1, `stage1_jobs 里该会话恰好 1 条（实测 ${rootKeys.length}）`)
-  check(!Object.keys(jobs).some((k) => k.startsWith(ID_FRESH) || k.startsWith(ID_OLD) || k.startsWith(ID_CHILD)),
-    '未静置 / 超龄 / 非根 的会话都没有入队')
+  // 被纳入的超龄会话 = 那条 20 天的（本用例只有它一条超龄）；fresh / 非根仍然一条都不入队。
+  check(Object.keys(jobs).filter((k) => k.startsWith(ID_OLD)).length === 1,
+    `被纳入的超龄会话 = ID_OLD（20 天那条），实测 ${Object.keys(jobs).filter((k) => k.startsWith(ID_OLD)).length} 条`)
+  check(!Object.keys(jobs).some((k) => k.startsWith(ID_FRESH) || k.startsWith(ID_CHILD)),
+    '未静置 / 非根 的会话仍然一条都不入队')
 
   const r2 = await scanTool.execute({})
   check(r2.enqueued === 0 && r2.done >= 1, `再扫不重复入队（enqueued=${r2.enqueued} done=${r2.done}）`)

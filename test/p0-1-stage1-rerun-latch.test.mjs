@@ -34,7 +34,7 @@ let releaseGate = null
 const gate = () => new Promise((r) => { releaseGate = r })
 const longMsg = (id) => 'this is a reasonably long message for session ' + id + ' that is long enough to trigger the model extraction step'
 const msgEvent = (id) => ({ type: 'user/message', seq: 0, time: 0, surfaceOp: 'append', data: { id, role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: longMsg(id) }] } })
-const readSession = async (id) => ({ session: { version: 0, id, cwd: 'C:/' + id, createdAt: 0 }, events: [msgEvent(id)] })
+const readSession = async (id) => ({ session: { version: 4, isSeeded: false, id, cwd: 'C:/' + id, createdAt: 0 }, events: [msgEvent(id)] })
 const EXTRACTION_A = { rollout_summary: 'summary of session a', raw_memory: 'raw-a', slug: 'a', keywords: 'a', title: 'A' }
 const CONSOLIDATION = { memory_summary: 'v1\n## auto consolidated', registry: '# MEMORY.md\nauto registry' }
 const llmMock = {

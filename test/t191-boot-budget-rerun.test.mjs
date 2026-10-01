@@ -67,7 +67,7 @@ const newCtx = () => {
                   readInFlight = true
                   await new Promise((r) => { releaseRead = r })
                 }
-                return { session: { version: 0, id, cwd: 'C:/' + id, createdAt: 0 }, events: [] }
+                return { session: { version: 4, isSeeded: false, id, cwd: 'C:/' + id, createdAt: 0 }, events: [] }
               },
             }
             : undefined,

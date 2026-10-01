@@ -36,7 +36,7 @@ const msgEvent = (id, text) => ({
   data: { id, role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text }] },
 })
 const readSession = async (id) => ({
-  session: { version: 0, id, cwd: 'C:/proj', createdAt: 0 },
+  session: { version: 4, isSeeded: false, id, cwd: 'C:/proj', createdAt: 0 },
   events: [msgEvent(id, transcripts.get(id) || '')],
 })
 const EXTRACTION = { rollout_summary: '会话摘要（合成）', raw_memory: 'raw', slug: 'f1', keywords: 'k', title: 't' }

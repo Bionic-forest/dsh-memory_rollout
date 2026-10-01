@@ -60,12 +60,23 @@ async function runScenario({ sessionId, messageText, llmMode }) {
   const eventHandlers = {}
   const llm = makeLlm(llmMode)
   const readSession = async (id) => ({
-    session: { version: 0, id, cwd: 'C:/' + id, createdAt: 0 },
+    session: { version: 4, isSeeded: false, id, cwd: 'C:/' + id, createdAt: 0 },
     events: [msgEvent(id, messageText)],
   })
+  // 【C4 夹具适配】disposed 先取该会话的持久快照 + 用唯一资格判定（静置 ≥6h）决定入队；
+  //   会话 id 由 `runScenario` 参数决定 ⇒ 快照按 sessionId 现造（形状与真宿主一致）。
+  const persistenceMock = {
+    list: async () => [{
+      header: { version: 4, isSeeded: false, id: sessionId, cwd: 'C:/' + sessionId, createdAt: 0 },
+      revision: '1:2:3:' + Math.round((Date.now() - 12 * 3600000) * 1e6) + ':4',
+      sizeBytes: 128,
+    }],
+    locate: () => ({ path: 'Z:\\c4-not-exist\\log.jsonl' }),
+  }
   const { ctx, domain } = makeCtx({
     get: (k) => {
       if (k === 'sessionQuery') return { readSession }
+      if (k === 'sessionPersistence') return persistenceMock
       if (k === 'llm') return llm
       if (k === 'agentDefaultModel') return { currentSelection: () => ({ provider: 'mock', model: 'mock-1' }) }
       return undefined

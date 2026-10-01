@@ -34,16 +34,31 @@ fs.mkdirSync(tmp, { recursive: true })
 let persistedBody = '' // 模拟持久日志的规范正文（source-aware 序列化前的 messages 由 readSession 造）
 // readSession 返回持久 events；我们用 text 直接当作持久正文，方便控制增量。
 const readSession = async (id) => ({
-  session: { version: 0, id, cwd: 'C:/' + id, createdAt: 0 },
+  session: { version: 4, isSeeded: false, id, cwd: 'C:/' + id, createdAt: 0 },
   // 持久消息：一个 user message（source.kind=user），text=persistedBody
   events: persistedBody
     ? [{ type: 'user/message', seq: 0, time: 0, surfaceOp: 'append', data: { id: 'm1', role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: persistedBody }] } }]
     : [],
 })
 
+// 【C4 夹具适配】官方 `sessionPersistence` 供货面 + 时间信号（"静置"由 revision 第 4 段表达）。
+//   C4 起 `session/disposed` 先取该会话的持久快照、再用**唯一**资格判定（静置 ≥ minRolloutIdleHours，默认 6h）
+//   决定是否入队。这里给的就是**真宿主会提供的形状**（`{header, revision, sizeBytes}`）：
+//   revision = `dev:ino:size:mtimeNs:ctimeNs`（官方 fileRevision 形状）⇒ 12h 前的 mtimeNs 即"已静置 12h"。
+//   ⇒ 本夹具**不绕过任何资格门**：会话是被新语义**正常纳入**的。
+const IDLE_HOURS = 12
+const snapshotOf = (id, headerExtra = {}) => ({
+  header: { version: 4, isSeeded: false, id, cwd: 'C:/' + id, createdAt: 0, ...headerExtra },
+  revision: '1:2:3:' + Math.round((Date.now() - IDLE_HOURS * 3600000) * 1e6) + ':4',
+  sizeBytes: 128,
+})
+const persistenceMock = { list: async () => [snapshotOf('r1')], locate: () => ({ path: 'Z:\\c4-not-exist\\log.jsonl' }) }
+
 const eventHandlers = {}
 const { ctx, domain } = makeCtx({
-  get: (k) => (k === 'sessionQuery' ? { readSession } : undefined),
+  get: (k) => (k === 'sessionQuery' ? { readSession }
+    : k === 'sessionPersistence' ? persistenceMock
+      : undefined),
   on: (ev, cb) => { eventHandlers[ev] = cb; return () => {} },
 })
 
@@ -65,14 +80,36 @@ try {
   check(wmA.includes(contentWatermark('- [user] ' + 'Session A establishes durable preference X about code review workflow.')), `第一次水印来自持久正文（而非 live 空）: ${wmA}`)
 
   // 第二次 dispose：持久正文新增内容 B（用户恢复会话后加了新决定）。
+  // **契约（C4 §10.1 + F2/R1 · 2026-10-01）**：`session/disposed` **不得绕过 6h 静置门** —— 内容刚变 ⇒ 内容
+  //   计时重置 ⇒ 此刻**只请求复查、不入队**。要拿到"新内容 B 的作业"，必须先让 B 静置够。
   persistedBody = 'Session A establishes durable preference X about code review workflow. Then later the user decides Y: always run tests before merge.'
   await eventHandlers['session/disposed'](sess)
   await new Promise((r) => setTimeout(r, 150))
   const jobsAfterB = jobBySession(domain, 'r1')
-  const wmB = jobsAfterB.map((j) => j.source_watermark).join(',')
-  check(jobsAfterB.length >= 2, `第一次后再次 dispose 产生新的有效 job（jobs=${jobsAfterB.length}）`)
-  check(wmB.includes(contentWatermark('- [user] ' + 'Session A establishes durable preference X about code review workflow. Then later the user decides Y: always run tests before merge.')), `第二次水印含新增内容 B 的持久正文（非重复空水印）`)
-  check(new Set(jobsAfterB.map((j) => j.source_watermark)).size === jobsAfterB.length, '两次水印不同（未被去重合并）')
+  check(jobsAfterB.length === 1, `内容刚变 ⇒ dispose **不绕门**、不新增作业（jobs=${jobsAfterB.length}）`)
+  // 夹具：把内容 B 的计时起点播到 12h 前（水位 = 真实内容水位 wmBexpect）⇒ 再 dispose 才轮到新水位。
+  const wmBexpect = contentWatermark('- [user] ' + persistedBody)
+  {
+    const metaT = domain.table('stage1_meta')
+    const curMeta = metaT.get('meta') && typeof metaT.get('meta') === 'object' ? metaT.get('meta') : {}
+    const cs = curMeta.contentSeen && typeof curMeta.contentSeen === 'object' ? { ...curMeta.contentSeen } : {}
+    const prevRec = cs.r1 || {}
+    cs.r1 = {
+      sizeBytes: Number(prevRec.sizeBytes || 0),
+      revision: String(prevRec.revision || ''),
+      watermark: wmBexpect,
+      firstSeenAt: new Date(Date.now() - 12 * 3600000).toISOString(),
+      firstSeenSource: 'fixture-seeded',
+    }
+    await metaT.put('meta', { ...curMeta, contentSeen: cs })
+  }
+  await eventHandlers['session/disposed'](sess)
+  await new Promise((r) => setTimeout(r, 150))
+  const jobsAfterB2 = jobBySession(domain, 'r1')
+  const wmB = jobsAfterB2.map((j) => j.source_watermark).join(',')
+  check(jobsAfterB2.length >= 2, `B 静置够后再次 dispose ⇒ 新水位入队（jobs=${jobsAfterB2.length}）`)
+  check(wmB.includes(wmBexpect), `第二次水印含新增内容 B 的持久正文（非重复空水印）`)
+  check(new Set(jobsAfterB2.map((j) => j.source_watermark)).size === jobsAfterB2.length, '两次水印不同（未被去重合并）')
 
   console.log('[2] 持久正文不变时再次 dispose 仍去重（不产生重复 job）')
   const countBefore = jobBySession(domain, 'r1').length

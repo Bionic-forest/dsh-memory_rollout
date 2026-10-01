@@ -17,7 +17,7 @@ let extractionCalls = 0
 let consolidationCalls = 0
 const msgEvent = (id, text) => ({ type: 'user/message', seq: 0, time: 0, surfaceOp: 'append', data: { id, role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text }] } })
 // ≥60 字符的持久会话消息，确保 drain 提炼阶段真的触发
-const readSession = async (id) => ({ session: { version: 0, id, cwd: 'C:/' + id, createdAt: 0 }, events: [msgEvent(id, 'this session analyzed the rollout plugin architecture and decided on the phase two flow across many turns')] })
+const readSession = async (id) => ({ session: { version: 4, isSeeded: false, id, cwd: 'C:/' + id, createdAt: 0 }, events: [msgEvent(id, 'this session analyzed the rollout plugin architecture and decided on the phase two flow across many turns')] })
 const EXTRACTION = { rollout_summary: 'a durable summary', raw_memory: 'raw line', slug: 'phase2-autotrigger', keywords: 'k1,k2', title: 'title' }
 const CONSOLIDATION = { memory_summary: 'v1\n## auto consolidated', registry: '# MEMORY.md\nauto registry' }
 const llmMock = {
